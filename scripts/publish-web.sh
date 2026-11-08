@@ -73,7 +73,7 @@ if [ -z "$WASM_OPT" ] && command -v wasm-opt >/dev/null 2>&1; then
     WASM_OPT="$(command -v wasm-opt)"
     WASM_OPT_SOURCE="path"
 fi
-if [ -n "$WASM_OPT" ]; then
+    if [ -n "$WASM_OPT" ]; then
     echo "[mkv]      wasm-opt：$WASM_OPT（来源：$WASM_OPT_SOURCE）"
     WASM_OPT_VERSION="$("$WASM_OPT" --version 2>/dev/null | head -n1 || echo '未知')"
     echo "[mkv]      wasm-opt 版本：$WASM_OPT_VERSION"

@@ -179,16 +179,26 @@ jobs:
               echo "::warning::binaryen 下载失败，将退回 apt 的 wasm-opt（版本可能偏旧）"
               rm -f binaryen.tar.gz
             else
-              # binaryen 官方 tar 解压后是 binaryen-version_<ver>/bin/wasm-opt
+              # binaryen 官方 tar 解压后是 binaryen-version_<ver>/{bin,lib}，
+              # 必须整目录搬过去（只放 bin/wasm-opt 会让 dx 认为安装不完整而重新下载，
+              # 那正是 run #15 的失败模式）。
               rm -rf binaryen-extract
               mkdir -p binaryen-extract
               tar -xzf binaryen.tar.gz -C binaryen-extract
-              BIN_PATH="$(find binaryen-extract -type f -name wasm-opt | head -n1)"
-              if [ -n "$BIN_PATH" ]; then
-                cp "$BIN_PATH" "$TARGET_DIR/bin/wasm-opt"
-                chmod +x "$TARGET_DIR/bin/wasm-opt"
+              SRC_DIR="$(find binaryen-extract -maxdepth 1 -type d -name 'binaryen-version_*' | head -n1)"
+              if [ -z "$SRC_DIR" ] || [ ! -x "$SRC_DIR/bin/wasm-opt" ]; then
+                echo "::warning::binaryen 压缩包结构异常，未找到 bin/wasm-opt"
               else
-                echo "::warning::binaryen 压缩包中未找到 wasm-opt"
+                rm -rf "$TARGET_DIR"
+                mkdir -p "$(dirname "$TARGET_DIR")"
+                cp -R "$SRC_DIR" "$TARGET_DIR"
+                chmod +x "$TARGET_DIR/bin/wasm-opt"
+                echo "已安装 binaryen 到 $TARGET_DIR"
+                # 额外装一份到 /usr/local/bin：publish-web.sh 在 dx 缓存缺失时
+                # 会退到 PATH，这里确保 PATH 上拿到的是我们下载的版本
+                # （而不是 apt 里可能很旧的 binaryen）。
+                install -m 0755 "$TARGET_DIR/bin/wasm-opt" /usr/local/bin/wasm-opt
+                echo "已安装 wasm-opt 到 /usr/local/bin/wasm-opt"
               fi
               rm -rf binaryen-extract binaryen.tar.gz
             fi
@@ -232,7 +242,12 @@ jobs:
 
       # ---------- 质量门禁 3：release 静态站点 ----------
       - name: 构建静态站点（导出索引 → dx release → dist/）
-        run: bash scripts/publish-web.sh 2>&1 | tee -a /tmp/mkv-ci.log
+        run: |
+          # 必须开 pipefail：否则 publish-web.sh 的非零退出码会被 tee 吞掉，
+          # 表现为「构建成功」但产物缺失，后续门禁才以莫名其妙的方式失败
+          # （run #18 就是这样：构建步骤显示 success，实际脚本早已失败）。
+          set -o pipefail
+          bash scripts/publish-web.sh 2>&1 | tee -a /tmp/mkv-ci.log
 
       - name: 校验静态产物清单与 wasm 体积门禁
         run: |
