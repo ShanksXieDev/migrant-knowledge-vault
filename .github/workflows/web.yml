@@ -51,9 +51,31 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev \
             libssl-dev libxdo-dev patchelf binaryen
-          # 发布脚本优先用 dx 自带的 binaryen；这里仅保证 dx 未下载时 PATH 上仍有 wasm-opt。
-          # 体积门禁（wasm < 800KB）会验证优化确实生效。
+          # binaryen 提供 wasm-opt。apt 版本可能偏旧，因此这里只作为「兜底」，
+          # 真正的版本自检放在体积门禁步骤里做（不满足能力要求会明确失败）。
           wasm-opt --version
+
+      - name: 预取 binaryen（wasm-opt）并自检
+        run: |
+          set -euo pipefail
+          # dx 构建时会把 binaryen 下到 ~/.dx/tools/binaryen-*/bin/，
+          # 但该下载走 GitHub Release 直链，网络抖动时可能失败（run #15 即如此：
+          # binaryen 没落地 → wasm 未被优化 → 体积门禁失败，且日志里没有任何线索）。
+          # 这里显式预取一次并验证可执行，失败不阻断（后续门禁会用 apt 的 binaryen 兜底），
+          # 但会把原因写进 annotation，便于无日志排障。
+          FOUND=""
+          for candidate in "$HOME"/.dx/tools/binaryen-*/bin/wasm-opt; do
+            if [ -x "$candidate" ]; then FOUND="$candidate"; break; fi
+          done
+          if [ -z "$FOUND" ]; then
+            FOUND="$(command -v wasm-opt || true)"
+          fi
+          if [ -z "$FOUND" ]; then
+            echo "::warning::未找到 wasm-opt（dx 缓存与 PATH 均无），体积门禁会明确失败"
+            exit 0
+          fi
+          echo "wasm-opt 路径：$FOUND"
+          echo "wasm-opt 版本：$("$FOUND" --version 2>&1 | head -n1)"
 
       - name: 安装 dx（官方预编译二进制 + sha256 校验）
         run: |
@@ -173,7 +195,35 @@ jobs:
           # 体积门禁：wasm-opt -Oz --strip-debug 必须生效（剥离 dx 默认的 DWARF 段）。
           # 未优化约 1.2MB，优化后约 650KB；阈值 800KB 留出 binaryen 版本差异余量。
           # 未生效通常意味着 wasm-opt 未找到，应直接让 CI 失败而不是静默发布 1MB+ 产物。
-          python3 -c "import glob,json,os; i=json.load(open('dist/deploy-info.json')); w=glob.glob('dist/assets/*.wasm'); assert len(w)==1, w; s=os.path.getsize(w[0]); print('wasm bytes:',s,'optimization:',i.get('wasm_optimization')); assert s < 800000, 'wasm 未被有效优化: %d bytes' % s"
+          #
+          # 失败时必须把「真实原因」写进 annotation：job log 对无 admin 权限的
+          # 匿名访问不可下载（403），只有 annotation 能通过 check-runs API 读到。
+          # run #15 的排查卡点正是这里——门禁失败了，但日志里没有任何 wasm-opt 线索。
+          python3 - <<'PY'
+          import glob, json, os, sys
+
+          info = json.load(open('dist/deploy-info.json', encoding='utf-8'))
+          wasms = glob.glob('dist/assets/*.wasm')
+          if len(wasms) != 1:
+              msg = '产物中 wasm 数量异常：%s' % wasms
+              print('::error::' + msg)
+              sys.exit(1)
+          size = os.path.getsize(wasms[0])
+          opt = info.get('wasm_optimization')
+          issue = info.get('wasm_opt_issue')
+          version = info.get('wasm_opt_version')
+          print('wasm bytes: %d  optimization: %s' % (size, opt))
+          print('wasm-opt 版本: %s' % version)
+          if size >= 800000:
+              print('::error::wasm 未被有效优化: %d bytes（阈值 800000）' % size)
+              print('::error::wasm-opt 版本: %s' % version)
+              print('::error::wasm-opt 问题: %s' % (issue or '未记录（可能 wasm-opt 未找到）'))
+              print('::error::优化记录: %s' % opt)
+              sys.exit(1)
+          if not opt:
+              print('::error::产物体积达标但缺少优化记录，门禁逻辑异常，请检查 publish-web.sh')
+              sys.exit(1)
+          PY
 
       # ---------- 质量门禁 4：真实浏览器回归（核心链路 100%） ----------
       - name: 安装 Playwright + Chromium

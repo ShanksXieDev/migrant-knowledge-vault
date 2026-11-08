@@ -62,26 +62,37 @@ fi
 # CI runner 上若预装了较老的 binaryen，老版本可能解析不了新版 wasm 特性。
 # 找不到时只警告、不阻断发布；workflow 的体积门禁会让 CI 明确失败而不是静默发布。
 WASM_OPT=""
+WASM_OPT_SOURCE=""
 for candidate in "$HOME"/.dx/tools/binaryen-*/bin/wasm-opt \
                  "$HOME"/.dx/tools/binaryen-*/bin/wasm-opt.exe \
                  "$HOME"/.dx/tools/binaryen-*/wasm-opt \
                  "$HOME"/.dx/tools/binaryen-*/wasm-opt.exe; do
-    if [ -x "$candidate" ]; then WASM_OPT="$candidate"; break; fi
+    if [ -x "$candidate" ]; then WASM_OPT="$candidate"; WASM_OPT_SOURCE="dx-cache"; break; fi
 done
 if [ -z "$WASM_OPT" ] && command -v wasm-opt >/dev/null 2>&1; then
     WASM_OPT="$(command -v wasm-opt)"
+    WASM_OPT_SOURCE="path"
 fi
 if [ -n "$WASM_OPT" ]; then
-    echo "[mkv]      wasm-opt：$WASM_OPT"
+    echo "[mkv]      wasm-opt：$WASM_OPT（来源：$WASM_OPT_SOURCE）"
+    WASM_OPT_VERSION="$("$WASM_OPT" --version 2>/dev/null | head -n1 || echo '未知')"
+    echo "[mkv]      wasm-opt 版本：$WASM_OPT_VERSION"
 else
-    echo "[mkv]      警告：未找到 wasm-opt，本次跳过体积优化"
+    # 这里不静默：体积门禁会因此失败，必须让原因在日志里一眼可见
+    # （run #15 就因为 dx 未成功下载 binaryen 导致 wasm 未优化、门禁失败，
+    #   而当时的日志里没有任何 wasm-opt 相关线索，排查成本很高）。
+    echo "[mkv]      警告：未找到 wasm-opt，本次跳过体积优化" >&2
+    echo "[mkv]      提示：dx 构建时应自动下载 binaryen 到 ~/.dx/tools/；" >&2
+    echo "[mkv]            若该步骤失败，请检查 GitHub Release 下载是否可达。" >&2
+    WASM_OPT_VERSION="none"
 fi
 
 # --- 3/4. 精确组装静态站点 + wasm 体积优化 ---
 echo "[mkv] 3/4 组装静态站点（路径重写 + 剔除残留资源）…"
 echo "[mkv] 4/4 附带可替换的索引产物…"
 
-MKV_WASM_OPT="$WASM_OPT" "$PY" - "$PUBLIC_DIR" "$DIST" "$INDEX_OUT" "$VAULT" "${MKV_WEB_INDEX_URL:-}" <<'PYEOF'
+MKV_WASM_OPT="$WASM_OPT" MKV_WASM_OPT_VERSION="$WASM_OPT_VERSION" \
+    "$PY" - "$PUBLIC_DIR" "$DIST" "$INDEX_OUT" "$VAULT" "${MKV_WEB_INDEX_URL:-}" <<'PYEOF'
 import datetime
 import io
 import json
@@ -110,15 +121,24 @@ wasm_opt = normalize_tool_path(os.environ.get('MKV_WASM_OPT', '').strip())
 if wasm_opt and not os.path.isfile(wasm_opt) and os.path.isfile(wasm_opt + '.exe'):
     wasm_opt += '.exe'
 wasm_optimization = {}
+# 优化失败原因：写进 deploy-info.json，让 CI 门禁能读到结构化原因，
+# 而不是只能从日志里猜（run #15 的排查就是这么卡住的）。
+wasm_opt_issue = None
 
 def optimize_wasm(tool, dst):
+    global wasm_opt_issue
     if not tool or not os.path.isfile(tool):
         print('      [warn] 未找到 wasm-opt，跳过体积优化')
+        wasm_opt_issue = 'wasm-opt 不可用：找不到可执行文件'
         return None
     before = os.path.getsize(dst)
     tmp = dst + '.opt'
+    # 按「保守 → 激进」排列，逐组尝试，任一组成功即采用。
+    # 第一组只含各版本 binaryen 都支持的基础参数；
+    # 第二、三组含更多剥离项，旧版本 binaryen 可能不认识，会自动跳到下一组。
     flag_sets = [
         ['-Oz', '--strip-debug'],
+        ['-Oz', '--strip-debug', '--strip-dwarf'],
         ['-Oz', '--strip-debug', '--strip-dwarf', '--strip-producers'],
     ]
     for flags in flag_sets:
@@ -137,6 +157,8 @@ def optimize_wasm(tool, dst):
         # CI 上 binaryen 版本不兼容时，把真实原因打进日志，便于直接排障
         print('      [warn] wasm-opt %s 未采用（exit %d）：%s'
               % (' '.join(flags), r.returncode, reason))
+        wasm_opt_issue = 'wasm-opt %s 失败（exit %d）：%s' % (
+            ' '.join(flags), r.returncode, reason)
         if os.path.isfile(tmp):
             os.remove(tmp)
     print('      [warn] wasm-opt 未产出更小的产物，保留原始 wasm')
@@ -203,6 +225,8 @@ info = {
     'deployment': 'static (plan A)',
     'remote_index_url': remote or None,
     'wasm_optimization': wasm_optimization or None,
+    'wasm_opt_issue': wasm_opt_issue,
+    'wasm_opt_version': os.environ.get('MKV_WASM_OPT_VERSION') or None,
     'files': files,
 }
 io.open(os.path.join(dist, 'deploy-info.json'), 'w', encoding='utf-8').write(
