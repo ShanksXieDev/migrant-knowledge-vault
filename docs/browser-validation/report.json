@@ -4,22 +4,22 @@
   "keyword": "模流分析",
   "keyword2": "仿真",
   "searchTrigger": "Enter（无搜索按钮）",
-  "expectedDocs": 8,
+  "expectedDocs": 9,
   "backlinkTarget": {
-    "path": "01-笔记/模流分析-入门.md",
-    "inbound": 2
+    "path": "03-台账/模具台账.xlsx",
+    "inbound": 3
   },
   "passed": true,
   "checks": [
     {
       "name": "A1 首屏渲染全部文档（内嵌索引生效）",
       "ok": true,
-      "detail": "8 / 8 篇"
+      "detail": "9 / 9 篇"
     },
     {
       "name": "A2 顶栏显示内嵌索引与知识库名",
       "ok": true,
-      "detail": "status=\"8 个文档 · 构建期内嵌产物\" root=\"sample-vault\""
+      "detail": "status=\"9 个文档 · 构建期内嵌产物\" root=\"sample-vault\""
     },
     {
       "name": "A3 多格式文档均在列表",
@@ -34,7 +34,7 @@
     {
       "name": "A5 预览正文非空",
       "ok": true,
-      "detail": "223 字符"
+      "detail": "230 字符"
     },
     {
       "name": "A6 Web 端无内置编辑按钮",
@@ -49,7 +49,7 @@
     {
       "name": "A8 双链反链面板",
       "ok": true,
-      "detail": "目标=01-笔记/模流分析-入门.md，界面 2 条 / 产物 2 条入链"
+      "detail": "目标=03-台账/模具台账.xlsx，界面 3 条 / 产物 3 条入链"
     },
     {
       "name": "A9 回车触发中文检索并命中",
@@ -94,7 +94,92 @@
     {
       "name": "A17 Tab 切换正常",
       "ok": true,
-      "detail": "8 篇"
+      "detail": "9 篇"
+    },
+    {
+      "name": "B1 检索结果带精确位置标签",
+      "ok": true,
+      "detail": "5 条，首个=📍 第 1 段"
+    },
+    {
+      "name": "B2 点击结果跳到命中片段并高亮",
+      "ok": true,
+      "detail": "bar=\"📍 已定位：第 1 段\nMoldflow 模流分析是注塑成型前的重要仿真手段，用于评估浇口位置、熔接线位置与填充时间。\" active=1"
+    },
+    {
+      "name": "B3 聚焦正文含命中词",
+      "ok": true,
+      "detail": "68 字符 / 关键词 模流分析"
+    },
+    {
+      "name": "B4 查看全文清除定位并恢复全文",
+      "ok": true,
+      "detail": "68 → 230 字符，剩余高亮 0"
+    },
+    {
+      "name": "B5 关系图谱渲染节点与边",
+      "ok": true,
+      "detail": "9 节点 / 12 边；状态「已渲染 9 / 共 9 个节点」，统计「9 个节点 · 12 条边」（产物 9 篇 → 期望 9 节点 / 12 边）"
+    },
+    {
+      "name": "B6 图谱缩放生效",
+      "ok": true,
+      "detail": "translate(360 280) scale(1) translate(-360 -280) → translate(360 280) scale(1.25) translate(-360 -280)"
+    },
+    {
+      "name": "B7 点选节点跳回文档预览",
+      "ok": true,
+      "detail": "当前页签=全部文档"
+    },
+    {
+      "name": "B8 图谱格式图例存在",
+      "ok": true,
+      "detail": "图例容器 1 个 / 条目 6 项，标题「格式图例」"
+    },
+    {
+      "name": "C1 引用处内联显示源片段内容",
+      "ok": true,
+      "detail": "4 张卡片，首张=\"📎 台账 · 第 2 行 · 模具台账.xlsx\n台账: PN-1024 | MDL-08\""
+    },
+    {
+      "name": "C2 刷新引用按钮可用",
+      "ok": true,
+      "detail": "status=\"已刷新 4 条跨格式引用\""
+    },
+    {
+      "name": "C3 点选引用跳到源文档并定位片段",
+      "ok": true,
+      "detail": "预览=\"03-台账/模具台账.xlsx\" 高亮片段=1"
+    },
+    {
+      "name": "D1 检索模式页签切换到正则",
+      "ok": true,
+      "detail": "正则=\"mkv-mode-tab mkv-mode-active\" 普通词条=\"mkv-mode-tab\""
+    },
+    {
+      "name": "D2 正则模式检索命中且无错误提示",
+      "ok": true,
+      "detail": "正则「一方|一步」→ 2 条，status=\"检索「一方|一步」命中 2 条\"，错误提示 0 处"
+    },
+    {
+      "name": "D3 非法正则显示「正则无效」而非零命中，切回普通词条后错误消失",
+      "ok": true,
+      "detail": "错误=\"正则无效：正则语法错误：位置 0 处字符类 `[` 缺少配对的 `]`\"，结果 0 条，status=\"正则无效：正则语法错误：位置 0 处字符类 `[` 缺少配对的 `]`\"；切回后普通词条=\"mkv-mode-tab mkv-mode-active\"，错误提示 0 处"
+    },
+    {
+      "name": "D4 过滤面板可展开且「格式」维度有候选",
+      "ok": true,
+      "detail": "面板展开=true，格式候选 6 个：Drawio, Excel, Markdown, PowerPoint, Visio, Word"
+    },
+    {
+      "name": "D5 格式过滤需回车重跑且结果只剩该格式",
+      "ok": true,
+      "detail": "查询「工艺参数基线」→ 勾选「Markdown」前 6 条（{\"Markdown\":4,\"Drawio\":1,\"PowerPoint\":1}）；勾选后未回车仍 6 条；回车后 4 条，格式=[\"Markdown\",\"Markdown\",\"Markdown\",\"Markdown\"]（该格式全库 4 篇，期望 4 条）"
+    },
+    {
+      "name": "D6 清空过滤后条件与结果均恢复",
+      "ok": true,
+      "detail": "选中态 0 处，结果 6 条（期望 6 条），格式=[\"Markdown\",\"Markdown\",\"Markdown\",\"Markdown\",\"Drawio\",\"PowerPoint\"]"
     },
     {
       "name": "A18 无未捕获 JS 异常",
@@ -105,10 +190,15 @@
   "pageErrors": [],
   "consoleErrors": [],
   "fatal": null,
-  "durationMs": 1928,
+  "durationMs": 4354,
   "screenshots": [
     "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\01-first-paint.png",
     "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\02-document-backlinks.png",
-    "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\03-search-results.png"
+    "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\03-search-results.png",
+    "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\04-graph-view.png",
+    "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\05-reference-view.png",
+    "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\06-regex-search.png",
+    "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\07-regex-invalid.png",
+    "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\08-filter-applied.png"
   ]
 }

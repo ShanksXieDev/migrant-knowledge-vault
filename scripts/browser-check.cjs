@@ -4,9 +4,15 @@
  * 驱动真实 Microsoft Edge（headless）打开 dx serve 的页面，执行点击 / 输入 / 页签切换，
  * 验证「构建期内嵌的预构建只读索引」在真实浏览器里可检索、可预览、可看双链。
  *
- * 共 28 项断言：A1–A18 为既有核心链路；B1–B4 为检索结果精确定位（PRD §7.1），
- * B5–B7 为 F-10 双链关系图谱（渲染 / 缩放 / 点选跳转）；
- * C1–C3 为 F-06 跨格式引用（内联源片段 / 刷新 / 点选跳转）。
+ * 共 35 项断言，分四组：
+ * - A1–A18：既有核心链路（首屏 / 预览 / 反链 / 中文检索 / 页签 / 异常检查）。
+ * - B1–B4：检索结果精确定位（PRD §7.1）。
+ * - B5–B8：F-10 双链关系图谱 **V2**（渲染 / 缩放 / 点选跳转 / 格式图例）。
+ *   V2 的类名是 `mkv-graph-v2-*`（`mkv-graph-v2-svg` / `-node` / `-edge` / `-tools`），
+ *   旧的 `mkv-graph-svg` / `mkv-graph-tools` 已随产品下线，断言必须用 v2 选择器。
+ * - C1–C3：F-06 跨格式引用（内联源片段 / 刷新 / 点选跳转）。
+ * - D1–D6：F-12 正则检索（模式页签 / 正则命中 / 非法正则报错）与
+ *   F-07 多维过滤（格式候选 / 过滤需回车重跑 / 清空过滤）。
  *
  * 运行：
  *   NODE_PATH=<playwright 所在 node_modules> node scripts/browser-check.cjs
@@ -61,11 +67,54 @@ const alt = index.postings.find(
 const keyword2 = alt ? alt.token : keyword;
 const noMatch = '___mkv_nonexistent_term___';
 
+// F-12 正则检索用的表达式：取两个真实出现在**原文**里的中文词拼成「A|B」。
+// 纯中文 + 顶层择一是 core 自研正则引擎明确支持的语法，且必然能命中原文。
+const cnTokens = [...new Set(index.postings.map((p) => p.token))].filter(
+  (t) => /^[\u4e00-\u9fff]+$/.test(t) && t.length >= 2
+);
+const cnInText = cnTokens.filter((t) => index.docs.some((d) => (d.text || '').includes(t)));
+const regexA = cnInText[0] || '模流';
+const regexB = cnInText[1] || regexA;
+const regexQuery = `${regexA}|${regexB}`;
+
 // 反链目标：产物中入链最多的 to_path
 const inbound = {};
 for (const l of index.links) inbound[l.to_path] = (inbound[l.to_path] || 0) + 1;
 const backlinkTarget = Object.entries(inbound).sort((a, b) => b[1] - a[1])[0] || [null, 0];
 const expectedDocs = index.docs.length;
+
+// F-10 图谱的期望值（与 core 的 graph_topology 同语义）：
+// - 节点：全部文档去重后的路径数（graph_snapshot 用 docs 建节点表）；
+// - 边：剔除自环、悬空端点与重复 (from,to) 后的链接数。
+const docPathSet = new Set(index.docs.map((d) => d.path));
+const expectedGraphNodes = docPathSet.size;
+const edgePairs = new Set();
+for (const l of index.links) {
+  if (!l.to_path || l.from_path === l.to_path) continue;
+  if (!docPathSet.has(l.from_path) || !docPathSet.has(l.to_path)) continue;
+  edgePairs.add(`${l.from_path}\u0000${l.to_path}`);
+}
+const expectedEdges = edgePairs.size;
+
+// F-07 过滤断言用：挑一个能命中**多种格式**的检索词，
+// 这样「按格式过滤」前后结果集才有差异，过滤是否生效才可观测。
+const multiFormatToken = (() => {
+  const cands = index.postings
+    .filter(
+      (p) =>
+        p.docs.length >= 2 &&
+        /^[\u4e00-\u9fff]+$/.test(p.token) &&
+        p.token.length >= 2
+    )
+    .map((p) => ({
+      token: p.token,
+      df: p.docs.length,
+      formats: new Set(p.docs.map((i) => (index.docs[i] ? index.docs[i].format : ''))).size,
+    }))
+    .filter((c) => c.formats >= 2)
+    .sort((a, b) => b.df - a.df || b.token.length - a.token.length);
+  return cands.length ? cands[0].token : keyword;
+})();
 
 const checks = [];
 function check(name, ok, detail) {
@@ -313,28 +362,57 @@ async function shot(page, name) {
       `${focusedText.length} → ${fullText.length} 字符，剩余高亮 ${activeAfter}`
     );
 
-    // ---------- B5–B7：F-10 双链关系图谱 ----------
+    // ---------- B5–B8：F-10 双链关系图谱（V2 类名 mkv-graph-v2-*） ----------
     await page.locator('.mkv-tab').filter({ hasText: '关系图谱' }).click();
-    await page.waitForSelector('.mkv-graph-svg', { timeout: 10000 });
-    const graphNodes = await page.locator('.mkv-graph-node').count();
-    const graphEdges = await page.locator('.mkv-graph-edge').count();
+    await page.waitForSelector('.mkv-graph-v2-svg', { timeout: 10000 });
+    const graphNodes = await page.locator('.mkv-graph-v2-node').count();
+    const graphEdges = await page.locator('.mkv-graph-v2-edge').count();
+    const graphStats = (await page.locator('.mkv-graph-v2-stats').innerText()).trim();
+    const graphStatus = (await page.locator('.mkv-graph-v2-status').innerText()).trim();
+    // 状态行「已渲染 N / 共 M 个节点」是产品自己给出的真实口径：
+    // 节点数超过阈值时只渲染视口内节点，DOM 里的节点数可能少于文档总数。
+    const rendered = /已渲染\s*(\d+)\s*\/\s*共\s*(\d+)/.exec(graphStatus);
+    const renderedCount = rendered ? Number(rendered[1]) : -1;
+    const totalCount = rendered ? Number(rendered[2]) : -1;
+    const statEdges = Number((/(\d+)\s*条边/.exec(graphStats) || [])[1]);
+    const culled = renderedCount >= 0 && renderedCount < totalCount;
     check(
       'B5 关系图谱渲染节点与边',
-      graphNodes === expectedDocs && graphEdges > 0,
-      `${graphNodes} 节点 / ${graphEdges} 边，期望 ${expectedDocs} 节点`
+      graphNodes > 0 &&
+        graphNodes <= expectedGraphNodes &&
+        renderedCount === graphNodes &&
+        totalCount === expectedGraphNodes &&
+        graphEdges > 0 &&
+        (culled ? graphEdges <= statEdges : graphEdges === statEdges),
+      `${graphNodes} 节点 / ${graphEdges} 边；状态「${graphStatus}」，统计「${graphStats}」` +
+        `（产物 ${expectedDocs} 篇 → 期望 ${expectedGraphNodes} 节点 / ${expectedEdges} 边）`
     );
     screenshots.push(await shot(page, '04-graph-view.png'));
 
-    const graphGroup = page.locator('.mkv-graph-svg > g');
+    const graphGroup = page.locator('.mkv-graph-v2-svg > g');
     const t0 = await graphGroup.getAttribute('transform');
-    await page.locator('.mkv-graph-tools button').filter({ hasText: '放大' }).click();
+    await page.locator('.mkv-graph-v2-tools button').filter({ hasText: '放大' }).click();
+    await page.waitForTimeout(150);
     const t1 = await graphGroup.getAttribute('transform');
     check('B6 图谱缩放生效', t0 !== t1, `${t0} → ${t1}`);
 
-    await page.locator('.mkv-graph-node').first().click();
+    // 点节点：命中标签 pointer-events:none，落到圆点上才是可点的图形本体
+    await page.locator('.mkv-graph-v2-node').first().locator('circle').click();
     await page.waitForSelector('.mkv-preview-header h2', { timeout: 10000 });
     const activeTab = (await page.locator('.mkv-tab-active').innerText()).trim();
-    check('B7 点选节点跳回文档预览', activeTab === '全部文档', `当前页签=${activeTab}`);
+    check('B7 点选节点跳回文档预览', activeTab.includes('全部文档'), `当前页签=${activeTab}`);
+
+    // B8 格式图例：图谱面板重新打开后仍应渲染
+    await page.locator('.mkv-tab').filter({ hasText: '关系图谱' }).click();
+    await page.waitForSelector('.mkv-graph-v2-legend', { timeout: 10000 });
+    const legendCount = await page.locator('.mkv-graph-v2-legend').count();
+    const legendItems = await page.locator('.mkv-graph-v2-legend .mkv-graph-v2-legend-item').count();
+    const legendTitle = (await page.locator('.mkv-graph-v2-legend-title').innerText()).trim();
+    check(
+      'B8 图谱格式图例存在',
+      legendCount === 1 && legendItems > 0 && legendTitle.includes('图例'),
+      `图例容器 ${legendCount} 个 / 条目 ${legendItems} 项，标题「${legendTitle}」`
+    );
 
     // ---------- C1–C3：F-06 跨格式引用 ----------
     const refDoc = index.docs.find((d) => d.path.includes('跨格式引用示例'));
@@ -374,6 +452,153 @@ async function shot(page, name) {
       check('C2 刷新引用按钮可用', false, '缺少示例文档');
       check('C3 点选引用跳到源文档并定位片段', false, '缺少示例文档');
     }
+
+    // ---------- D1–D6：F-12 正则检索 + F-07 多维过滤 ----------
+    // 模式页签：普通词条 / 正则（同一时刻只有一个带 mkv-mode-active）
+    const modeTab = (text) => page.locator('.mkv-mode-tab').filter({ hasText: text });
+    const topStatus = async () => (await page.locator('.mkv-topbar-status').innerText()).trim();
+    const resultFormats = async () =>
+      (await page.locator('.mkv-result-meta > span:first-child').allInnerTexts()).map((s) => s.trim());
+
+    // D1 切到「正则」页签
+    await modeTab('正则').click();
+    await page.waitForTimeout(200);
+    const regexTabClass = (await modeTab('正则').getAttribute('class')) || '';
+    const termsTabClass = (await modeTab('普通词条').getAttribute('class')) || '';
+    check(
+      'D1 检索模式页签切换到正则',
+      regexTabClass.includes('mkv-mode-active') && !termsTabClass.includes('mkv-mode-active'),
+      `正则="${regexTabClass}" 普通词条="${termsTabClass}"`
+    );
+
+    // D2 正则模式检索：合法表达式应命中，且不得出现错误提示
+    await input.fill(regexQuery);
+    await input.press('Enter');
+    await page.waitForFunction(
+      () => {
+        const s = document.querySelector('.mkv-topbar-status');
+        return s && s.textContent.includes('命中');
+      },
+      null,
+      { timeout: 10000 }
+    );
+    const regexHits = await page.locator('.mkv-result').count();
+    const regexStatus = await topStatus();
+    const regexErrors = await page.locator('.mkv-search-error').count();
+    check(
+      'D2 正则模式检索命中且无错误提示',
+      regexHits > 0 &&
+        regexErrors === 0 &&
+        regexStatus.includes('命中') &&
+        regexStatus.includes(regexQuery) &&
+        regexStatus.includes(String(regexHits)),
+      `正则「${regexQuery}」→ ${regexHits} 条，status="${regexStatus}"，错误提示 ${regexErrors} 处`
+    );
+    screenshots.push(await shot(page, '06-regex-search.png'));
+
+    // D3 非法正则：必须报「正则无效」，而不是伪装成「0 条命中」
+    await input.fill('[');
+    await input.press('Enter');
+    await page.waitForTimeout(300);
+    const badErrorCount = await page.locator('.mkv-search-error').count();
+    const badErrorText = badErrorCount
+      ? (await page.locator('.mkv-search-error').first().innerText()).trim()
+      : '';
+    const badHits = await page.locator('.mkv-result').count();
+    const badStatus = await topStatus();
+    // 恢复初始状态：切回「普通词条」，避免污染后续用例
+    await modeTab('普通词条').click();
+    await page.waitForTimeout(200);
+    const backTabClass = (await modeTab('普通词条').getAttribute('class')) || '';
+    const backErrors = await page.locator('.mkv-search-error').count();
+    check(
+      'D3 非法正则显示「正则无效」而非零命中，切回普通词条后错误消失',
+      badErrorCount >= 1 &&
+        badErrorText.startsWith('正则无效') &&
+        badHits === 0 &&
+        badStatus.includes('正则无效') &&
+        !badStatus.includes('命中') &&
+        backTabClass.includes('mkv-mode-active') &&
+        backErrors === 0,
+      `错误="${badErrorText}"，结果 ${badHits} 条，status="${badStatus}"；` +
+        `切回后普通词条="${backTabClass}"，错误提示 ${backErrors} 处`
+    );
+    screenshots.push(await shot(page, '07-regex-invalid.png'));
+
+    // D4 过滤面板：可展开，且「格式」维度有可点的候选 chip
+    const filterPanel = page.locator('details.mkv-filter-panel');
+    if (!(await filterPanel.evaluate((el) => el.open))) {
+      await page.locator('.mkv-filter-summary').click();
+      await page.waitForTimeout(200);
+    }
+    const panelOpen = await filterPanel.evaluate((el) => el.open);
+    const formatGroup = page
+      .locator('.mkv-filter-group')
+      .filter({ has: page.locator('.mkv-filter-label', { hasText: '格式' }) });
+    const formatChips = await formatGroup.locator('.mkv-chips .mkv-chip').allInnerTexts();
+    check(
+      'D4 过滤面板可展开且「格式」维度有候选',
+      panelOpen && (await formatGroup.count()) === 1 && formatChips.length > 0,
+      `面板展开=${panelOpen}，格式候选 ${formatChips.length} 个：${formatChips.join(', ')}`
+    );
+
+    // D5 勾选格式 → 必须回车才重跑；重跑后结果只剩该格式
+    await input.fill(multiFormatToken);
+    await input.press('Enter');
+    await page.waitForFunction(
+      () => {
+        const s = document.querySelector('.mkv-topbar-status');
+        return s && s.textContent.includes('命中');
+      },
+      null,
+      { timeout: 10000 }
+    );
+    const baseHits = await page.locator('.mkv-result').count();
+    const baseFormats = await resultFormats();
+    const fmtCount = {};
+    for (const f of baseFormats) fmtCount[f] = (fmtCount[f] || 0) + 1;
+    // 选命中最多的格式：若命中跨多种格式，勾它必然让结果变少
+    const targetFmt = Object.entries(fmtCount).sort((a, b) => b[1] - a[1])[0][0];
+    const expectFmtHits = fmtCount[targetFmt];
+    const docsOfFmt = index.docs.filter((d) => d.format === targetFmt).length;
+    await formatGroup.locator('.mkv-chips .mkv-chip').filter({ hasText: targetFmt }).first().click();
+    await page.waitForTimeout(200);
+    const hitsBeforeEnter = await page.locator('.mkv-result').count();
+    const chipOn = await page.locator('.mkv-chip-on').count();
+    await input.press('Enter');
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('.mkv-result').length !== n,
+      baseHits,
+      { timeout: 10000 }
+    );
+    const filteredHits = await page.locator('.mkv-result').count();
+    const filteredFormats = await resultFormats();
+    check(
+      'D5 格式过滤需回车重跑且结果只剩该格式',
+      chipOn >= 1 &&
+        hitsBeforeEnter === baseHits &&
+        filteredHits > 0 &&
+        filteredHits <= baseHits &&
+        filteredHits <= docsOfFmt &&
+        filteredHits === expectFmtHits &&
+        filteredFormats.every((f) => f === targetFmt),
+      `查询「${multiFormatToken}」→ 勾选「${targetFmt}」前 ${baseHits} 条（${JSON.stringify(fmtCount)}）；` +
+        `勾选后未回车仍 ${hitsBeforeEnter} 条；回车后 ${filteredHits} 条，格式=${JSON.stringify(filteredFormats)}` +
+        `（该格式全库 ${docsOfFmt} 篇，期望 ${expectFmtHits} 条）`
+    );
+    screenshots.push(await shot(page, '08-filter-applied.png'));
+
+    // D6 清空过滤：选中态消失 + 结果恢复
+    await page.locator('.mkv-filter-actions button').filter({ hasText: '清空过滤' }).click();
+    await page.waitForTimeout(400);
+    const clearedChips = await page.locator('.mkv-chip-on').count();
+    const restoredHits = await page.locator('.mkv-result').count();
+    const restoredFormats = await resultFormats();
+    check(
+      'D6 清空过滤后条件与结果均恢复',
+      clearedChips === 0 && restoredHits === baseHits && restoredFormats.length === baseFormats.length,
+      `选中态 ${clearedChips} 处，结果 ${restoredHits} 条（期望 ${baseHits} 条），格式=${JSON.stringify(restoredFormats)}`
+    );
 
     // A18 放到最后：覆盖定位与图谱的全部交互后再检查未捕获异常
     check('A18 无未捕获 JS 异常', pageErrors.length === 0, pageErrors.length ? pageErrors.join(' | ') : '0 个');
