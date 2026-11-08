@@ -84,6 +84,27 @@
 
 `id` 必须原样回传，宿主据此匹配响应。`error` 与 `result` 互斥。
 
+### 3.1 超时
+
+`ExternalConfig.timeout_ms` 是**单次调用的时限**，默认 10,000 ms。
+超过时限即返回错误，**绝不无限期挂起**——客户端被 `Mutex` 保护，
+一次挂起会锁死整个宿主 UI。
+
+超时后宿主会**终止该上游进程并丢弃读缓冲**，下次调用重新拉起一个干净的进程。
+这一步是必需的：若只丢弃「本次响应」而留着缓冲，
+下一次读到的会是**上一条请求的半截响应**，请求与响应从此错位。
+
+超时实现是**跨平台**的（把读一行交给独立线程，主线程用 `recv_timeout` 等待）。
+之所以不用 `set_nonblocking` + 轮询：那是 Unix 独有的 API，
+Windows 上没有——写成 `#[cfg(unix)]` 就等于让 Windows 继续裸奔。
+
+### 3.2 stdout 的洁净性
+
+协议约定 stdout 只走 JSON-RPC 报文。上游若往 stdout 打日志，
+会污染响应流。宿主当前**不做**跳过非 JSON 行的处理——
+遇到无法解析的行会直接报「上游进程响应不是合法 JSON-RPC」，
+宁可显式失败也不静默错位。
+
 ## 4. 方法映射
 
 宿主约定 5 个方法（定义在 `packages/core/src/backend.rs` 的 `methods` 模块）。
@@ -96,6 +117,16 @@
 | `mkv/editor/apply` | `{"state_b64": "<状态>", "action": <PluginAction>}` | `{"state_b64": "<新状态>"}` | 应用一次用户操作 |
 | `mkv/editor/serialize` | `{"state_b64": "<状态>", "original_b64": "<原文件字节>"}` | `{"bytes_b64": "<新文件字节>"}` | 序列化回原生文件 |
 | `mkv/editor/version` | `{}` | `{"version": "..."}` | 探测上游版本（健康检查用） |
+
+> **`open` 的 params 里为什么没有 `path`**：
+> **路径归宿主，内容归上游。**
+> 1. 契约层的 `PluginBackend::open(&self, bytes: &[u8])` 签名里**没有路径**——
+>    宿主把文件读成字节交给后端，路径不在这一层的语境里；
+> 2. 宿主读出的字节可能已包含宿主侧的处理结果，让上游按路径**重新读盘**
+>    会得到与宿主手里那份**不一致**的内容；
+> 3. 写回时宿主把字节写回它自己知道的原路径，上游不需要知道文件在哪儿。
+>
+> 早期文档写的是 `{"path": ..., "bytes_b64": ...}`，与实现不符，已纠正。
 
 ### 4.1 `PluginView` 的 JSON 形态
 
@@ -185,8 +216,33 @@ mkv editors backend <root>
 | 进程中途退出 | 当前调用返回「上游进程已退出（无响应）」，下次调用重新 spawn |
 | 响应缺字段 | 返回明确的 `Error::Config`（如「上游进程响应缺少 state_b64」） |
 | 方法不支持 | 返回 JSON-RPC `error`，宿主原样转成错误信息 |
+| **上游挂起不回应** | 当前调用在 `timeout_ms` 后返回「调用上游进程超时（N 毫秒）」，**并终止该进程、丢弃读缓冲**；下次调用重新 spawn 干净的进程 |
 
-## 8. 相关位置
+## 8. 端到端验证
+
+`packages/core/tests/rpc_e2e.rs` 是**跨平台**的端到端测试
+（Windows / Linux / macOS 跑的是同一份代码），覆盖：
+
+| 用例 | 验证内容 |
+|---|---|
+| `calls_method_and_returns_result` | 写入 → 读回 → 解析 → `result` 取值；同客户端复用同一进程 |
+| `surfaces_remote_error` | 上游 `error` 字段原样透传 |
+| `detects_process_exit` | 上游提前退出能被识别 |
+| `times_out_when_upstream_hangs` | 上游挂起时按时返回明确错误，**不永久挂起** |
+| `client_recovers_after_timeout` | 超时后客户端仍可继续使用（状态清理干净，不读到错位响应） |
+| `health_reports_upstream_version` | 健康检查能取到上游版本 |
+| `full_open_view_apply_serialize_chain` | **`open → view → apply → serialize` 完整四步**，全程走真实进程 |
+
+> **为什么用 `harness = false` 的自制 runner**：
+> 该测试需要**同时**扮演「测试运行器」与「被客户端 spawn 的迷你上游」，
+> 默认 libtest harness 无法在两者间切换；
+> 而用 `sh -c` / `cmd /C` 起服务器在两端语法不同（`cmd` 没有 `while read`），
+> 历史上正是这一点让端到端测试全部退化成 `#[cfg(unix)]`——
+> **Windows 上零覆盖**，而 Windows 正是本项目的主力开发环境。
+> 现在的做法是「启动自身」（`std::env::current_exe()`）并带 `--server=<模式>` 参数，
+> 因为 harness 是自制的，argv 由我们自己解析，不受 libtest 参数规则约束。
+
+## 9. 相关位置
 
 | 内容 | 位置 |
 |---|---|

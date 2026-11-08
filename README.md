@@ -321,6 +321,76 @@ cargo build --workspace              # 重建插件，重启应用生效
 > 双通道检测稳定报出 2 项更新，`confirm` 后 pin rev 与 `pending` 正确落盘、
 > 再次检测归零 —— 跟随链路端到端可用。
 
+### 9.6 上游适配器后端（进程外 MCP，架构闭环）
+
+插件化解决的是「**怎么组织代码**」，但没有解决「**上游更新怎么进来**」：
+插件是**编译期** crate，确认升级后仍需「同步源码 + 重建 + 重启」，
+迭代节奏完全受限于本项目的发版。
+
+上游三个项目**都已经实现了 MCP server**（JSON-RPC 2.0 over stdio），
+且 README 明确承诺「Every action is a command with a stable id」——
+**稳定的是命令 id，不是 crate API**。这正好是契约层需要的边界：
+
+```text
+  MKV 宿主（契约 v1 稳定）
+       │  JSON-RPC 2.0 over stdio
+       ▼
+  上游进程（gridcraft-mcp / deckcraft-mcp / wordcraft-mcp）
+```
+
+于是「上游更新 → 内置编辑器随之更新」变成：**换上游进程版本，不动宿主代码**。
+
+| 层 | 位置 | 职责 |
+|---|---|---|
+| 后端 trait | `packages/core/src/backend.rs` 的 `PluginBackend` | 与插件同形，但状态留在进程内、跨调用由宿主持有 |
+| 客户端 | `packages/core/src/rpc.rs` | JSON-RPC over stdio；惰性 spawn、进程退出后自愈、**单次调用超时** |
+| 适配器 | `packages/core/src/backend.rs` 的 `ExternalBackend` | 把上游 MCP server 适配成 `PluginBackend` |
+| 选择 | `editors.lock` 的 `backends` 段 / `.kbindex/editors.json` | 逐插件切换 `builtin` / `external` |
+
+```bash
+mkv editors backend <root>                                        # 查看后端与健康状态
+mkv editors backend <root> --set gridcraft --kind external --command mkv --arg editors --arg stub
+mkv editors stub                                                    # 参考适配器（同协议最小实现）
+```
+
+> **为什么不能链接上游 crate**（证据保留在 `backend.rs` 的 `UPSTREAM_LINKING_FINDINGS`）：
+> `gridcraft-xlsx` / `wordcraft-docx` **从未发布到 crates.io**
+> （workspace 依赖是纯 path、无 version，`cargo package` 直接失败）；
+> `deckcraft-pptx` 只发布 0.6.1、**落后 main 约两周**；
+> 且三者写回均为**全量重写**，与本项目**包级外科手术**（未编辑部件字节级原样保留）
+> 直接冲突——链接上游等于用「整包重写」替换「外科改写」。
+
+#### 9.6.1 超时：上游挂起不得锁死宿主 UI
+
+`ExternalConfig.timeout_ms`（默认 10 秒）是**单次调用的时限**。
+早期实现定义了它却**从未使用**——`read_line` 是阻塞调用，
+上游挂起不回应就会**永久阻塞**，而客户端被 `Mutex` 保护，
+于是整个宿主 UI 被锁死。
+
+现按「**读一行交给独立线程 + 主线程 `recv_timeout`**」实现，
+**跨平台**：Unix 的 `set_nonblocking` 在 Windows 上不存在，
+写成 `#[cfg(unix)]` 就等于让 Windows 继续裸奔。
+
+超时后**整个客户端作废**：终止进程 + 丢弃读缓冲。
+这一步是必需的——若只丢弃「本次响应」而留着缓冲，
+下一次读到的会是**上一条请求的半截响应**，请求与响应从此错位。
+
+#### 9.6.2 端到端验证：Windows 上也要真的跑
+
+`packages/core/tests/rpc_e2e.rs` 是**跨平台**端到端测试，
+覆盖 `open → view → apply → serialize` 完整四步 + 超时 + 自愈 + 错误透传 + 进程退出。
+
+> **为什么用 `harness = false` 的自制 runner**：
+> 该测试需要**同时**扮演「测试运行器」与「被客户端 spawn 的迷你上游」，
+> 默认 libtest harness 无法在两者间切换；
+> 而用 `sh -c` / `cmd /C` 起服务器在两端语法不同（`cmd` 没有 `while read`），
+> 历史上正是这一点让端到端测试全部退化成 `#[cfg(unix)]`——
+> **Windows 上零覆盖**，而 Windows 正是本项目的主力开发环境。
+> 现在的做法是「启动自身」（`std::env::current_exe()`）并带 `--server=<模式>` 参数：
+> 因为 harness 是自制的，argv 由我们自己解析，不受 libtest 参数规则约束。
+
+完整协议与接入指南见 [`docs/upstream-mcp-adapter.md`](docs/upstream-mcp-adapter.md)。
+
 ---
 
 ## 10. Web 端：预构建只读索引
@@ -489,7 +559,7 @@ cargo run -p mkv-cli -- watch D:/MyVault --debounce 200 --auto-commit
 scripts/publish-web.sh [vault_dir] [dict.txt]
 # → dist/：index.html + 1 个 JS + 1 个 wasm + mkv-index.json + .nojekyll + deploy-info.json
 # 实测 6 个文件 / 约 795 KB，零后端、完全离线
-# （插件化后 wasm 经 wasm-opt 从 1,338,199B 压到 724,696B；见 §12.7）
+# （F-06 进阶②/③ 接线后实测：wasm 706,686B + JS 39,327B + 索引 21,102B ≈ 751 KB；见 §12.7）
 ```
 
 脚本串联「导出索引 → `dx build --release` → 精确复制 → 路径相对化」。
@@ -776,6 +846,7 @@ opt-level = "z"
 | 历史基线（插件化后，run #14 / #23） | 1,274,581 B → 724,441 B |
 | 本轮五项功能落地后（修复前） | 891,480 B（超门禁） |
 | 本轮体积治理后（本地） | **693,304 B**（余量 107KB） |
+| F-06 进阶②/③ 接线后（本地） | **706,686 B**（余量 93KB / 11.7%） |
 | 工具来源 | 本地优先 dx 自动下载的 `~/.dx/tools/binaryen-*/bin/wasm-opt`（版本与 wasm-bindgen 产物匹配），PATH 上的 binaryen 仅作兜底；CI 侧改为**预装进 dx 缓存目录**（含 apt 兜底，见 §12.8），避免构建期再联网 |
 | 失败策略 | 找不到工具 / 未产出更小产物 → 只警告并保留原始 wasm，绝不阻断本地发布；CI 的 `wasm < 800KB` 门禁会据此判定失败 |
 
@@ -798,6 +869,11 @@ opt-level = "z"
 > 引用插入入口，wasm 一度涨到 891,480B（超门禁 91KB）；
 > 经体积归因 + 消融测量，改用 **fat LTO + 自有 crate `opt-level="z"`**，
 > 降到 **693,304B**，比插件化后的历史基线（724,441B）**还小 31KB**。
+>
+> **F-06 进阶②/③ 之后**：新增差异计算（`SourceDiff` / `diff_lines`）、
+> 原生应用唤起（`office_locator` + `launch_office_plan`）与 UI 差异块渲染，
+> 本地 wasm 693,304B → **706,686B**（余量 93KB / 11.7%），仍过门禁。
+> 索引 JSON 因新增 `ref_snapshots` 字段增至 21,102B（+1.6KB，4 条引用基线）。
 
 
 ### 12.8 CI 外部依赖的三条兜底通道
@@ -956,6 +1032,7 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
   点选卡片跳到源文档并高亮该片段。未解析的引用明确标注，绝不编造内容。
 - 验证：core 6 项单测 + 预构建兼容 2 项 + `refs_ui.rs` 4 项 SSR；
   浏览器 C1–C3（内联显示 `PN-1024` / 刷新 / 跳转定位）。
+  进阶① 见 §13.6.1，进阶② 见 §13.6.2，进阶③ 见 §13.6.3。
 
 > 边界：Web 只读端显示构建期快照，「源更新后刷新」在 Desktop 生效；
 > 定位到的是**抽取后的文本片段**，不是原生 Office 应用内的单元格 / 幻灯片对象。
@@ -980,6 +1057,79 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 
 > 已知限制：追加不带分隔符（`PN-1024@03-台账/模具台账.xlsx#2`）；
 > 候选序号是**去重后**列表位置，目标文档若含重复标签，`#N` 可能落到相邻片段。
+
+#### 13.6.2 进阶②：源变更差异高亮
+
+- **能力**：引用卡片在源片段相对「上次看到的内容」发生变化时，直接显示
+  **哪些行被改了**（新增行 / 删除行分别着色），而不只是「指纹变了」这个提示。
+- **core**：`core/refs.rs` 新增 `SourceDiff { added, removed, lines }` 与
+  `DiffLine { kind, text }`（`DiffLineKind` = Context / Added / Removed）；
+  `diff_lines(old, new)` 做**行级**差异：先剥公共前后缀（真实场景源文件通常只改一小块），
+  剩余区间做 LCS 动态规划；区间过大时**放弃精细比较**、判定为整体替换——
+  宁可显示粗一点的结果，也不让 UI 卡住。
+  `build_reference_views_with_snapshots()` 在命中快照且内容有变化时给引用视图挂上 `diff`。
+- **快照的键**：`snapshot_key(target_path, selector)` = `mkv:refsnap:{path}\u{1f}{selector}`，
+  用 ASCII 单元分隔符（U+001F）而不是 `#`，避免与选择器本身含 `#` 时产生歧义。
+  快照由调用方提供，本模块只做**纯计算**，因此三端都能用。
+- **Desktop 端基线**：持久化在库内 `.kbindex` 的 `ref_snapshots` 表
+  （`meta.rs`）。全量重建时刷新基线（「我确认已看到当前内容」），
+  增量修改（文件监听 / 编辑保存）**不**刷新——于是源文件被改动时能被识别为变更。
+- **Web 端基线**：浏览器没有持久化存储，「上次是什么样」只能由**构建端**带过来。
+  因此产物新增顶层字段 `PrebuiltIndex.ref_snapshots`（`#[serde(default)]`，
+  旧产物缺该字段时为空表 = 首次见到，不产出差异，不是错误），
+  存的是**源片段全文**。`export-web` 每次构建读上一份产物的 `ref_snapshots` 当基线，
+  算出的差异写进产物的 `refs[].diff`，Web 端**零运行时开销**即可显示高亮。
+
+> **踩过的坑：基线必须存全文，不能存 `snippet`。**
+> `ReferenceView.snippet` 是给卡片内联显示用的**截断版**（120 字符）。
+> 最初实现拿它当基线，跟当前**全文**做差异比对，结果任何超过 120 字符的段落
+> 都会在截断处被判成「删除 + 新增」——用户看到的是**根本不存在的变更**。
+> 现在基线存全文，`long_paragraph_against_full_text_baseline_produces_no_false_diff`
+> 这条单测专门盯这个不变式。
+
+- **UI**：`ReferenceCard` 在卡片内渲染 `.mkv-ref-diff` 差异块
+  （只列变化的行，上下文行不展示），标题给出「新增 N 行 / 删除 M 行」。
+- **验证**：
+  - core 单测 3 项（基线是全文 / 长段落无假差异 / 源真变了产出差异）；
+  - CLI 端到端：`export-web` 连跑三次——① 建基线无差异 → ② 内容不变**零假差异**
+    → ③ 改源文件后精确产出 `removed '| 注射速度 | 80 mm/s |'` +
+    `added '| 注射速度 | 95 mm/s |'`，其余 3 条引用不受影响；
+  - `packages/ui/tests/ref_diff_office_ui.rs` 5 项 SSR；
+  - 浏览器 C5（源未变更时不出现差异块）。
+
+#### 13.6.3 进阶③：原生 Office 应用内定位
+
+- **能力**：从引用卡片直接唤起**原生 Office 应用**并尽量定位到目标片段。
+- **能力矩阵（诚实降级，不假装能定位）**：
+
+  | 格式 | 能否在应用内定位 | 锚点形态 |
+  |------|------------------|----------|
+  | Excel | ✅ 单元格 | `ms-excel:ofe|u|<file-url>#<工作表>!<单元格>` |
+  | PowerPoint | ✅ 页 | `ms-powerpoint:ofe|u|<file-url>#slide=<n>` |
+  | Word / Visio / Drawio / Markdown | ❌ 只打开文件 | 无公开的应用内定位协议 |
+
+- **三层结构**（推导与执行分离，因此纯函数可在任意宿主单测）：
+  1. **推导**：`core/office_locator.rs` 纯函数——`fragment_from_label()` /
+     `fragment_from_selector()` / `plan_office_launch()` 产出 `OfficeLaunchPlan`；
+     `plan.is_precise()` 回答「能不能定位到片段级」，`plan.note` 说明「为什么这样降级」。
+  2. **执行**：`core/editor.rs` 的 `EditorRouter::launch_office_plan()` 只 `spawn` 不 `wait`
+     （Office 由用户自行关闭，保存后由 P0 文件监听增量更新索引）；
+     命令以 **argv** 形态下发、不经 shell，路径里的 `%` / `&` 不会被二次解析
+     （这一点对 Windows 的协议 URI 尤其重要）。
+  3. **跨端抽象**：`KnowledgeService::supports_office_locate()` / `open_in_office()`
+     默认 false / 报错（Web 只读端**不显示**按钮，不谎报能力）；
+     `NativeService` 覆写为 true 并委派 `Vault::open_in_office()`（标签优先、选择器兜底）。
+- **UI**：`ReferenceCard` 在卡片旁渲染 `.mkv-ref-office`「在 Office 中打开」按钮；
+  点击后按 `plan.is_precise()` 如实回报「已定位到片段」或
+  「已打开文件（该格式无法在应用内定位到片段）」。
+- **验证**：`packages/ui/tests/ref_diff_office_ui.rs` 5 项 SSR
+  （支持本地进程的后端显示按钮 / Web 只读端**不显示**）；
+  浏览器 C4（Web 端 `mkv-ref-office` 数为 0）。
+
+> **已知限制**：目前只做了 Desktop（`NativeService`）接线；
+> Mobile 端尚未接入（`mkv-mobile` 未实现 `open_in_office`）。
+> 「原生 Office 应用内定位」在 Word / Visio / Drawio 上仍只打开文件——
+> 这是**格式本身没有公开协议**导致的硬约束，不是实现缺失。
 
 
 ### 13.7 多维过滤 F-07
@@ -1056,18 +1206,30 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 
 1. **移动端真机验证**：CI 只能保证可编译
 2. **Desktop GUI 人工验收**：自动刷新与外部唤起的实际窗口行为
-3. **F-06 进阶②**：源变更差异高亮（`refs::diff_lines` 已有核心实现，UI 未接）
-4. **F-06 进阶③**：原生 Office 应用内定位（`core/office_locator.rs` 已有推导实现，
-   Desktop 端执行侧未接）
-5. **F-10 图谱进阶**：大库虚拟渲染已具备视口裁剪，按标签着色仍未做
-6. **wasm 体积**：门禁余量已回到 13.3%，但 `QueryFilter::clone` 单函数 10,131 B
+3. **F-10 图谱进阶**：大库虚拟渲染已具备视口裁剪，按标签着色仍未做
+4. **wasm 体积**：门禁余量已回到 11.7%，但 `QueryFilter::clone` 单函数 10,131 B
    属异常膨胀，值得单独优化
-7. **Node.js 20 警告**：CI 中 `actions/*` 的 Node 20 deprecation 提示，待官方迁移后评估升级
-8. **插件升级链路真机验收**：Desktop GUI 确认横幅、重建后重启生效的实际窗口行为
-9. **CI 兜底通道的常态化验证**：crates.io / apt 兜底目前只在 run #23 真实触发过一次
+5. **Node.js 20 警告**：CI 中 `actions/*` 的 Node 20 deprecation 提示，待官方迁移后评估升级
+6. **插件升级链路真机验收**：Desktop GUI 确认横幅、重建后重启生效的实际窗口行为
+7. **CI 兜底通道的常态化验证**：crates.io / apt 兜底目前只在 run #23 真实触发过一次
    （wasm-bindgen），其余分支只经过本地仿真。可考虑做成一条可手动触发的 workflow，
    强制走兜底路径，避免「平时不跑、要用时已经腐化」
+8. **F-06 进阶③ 的 Mobile 接线**：`mkv-mobile` 尚未实现 `open_in_office`
+9. **上游适配器后端的常态化验证**：进程外 JSON-RPC 后端已闭环，
+   但真实上游（`gridcraft-mcp` 等）尚未在真机跑通
 
+> 2026-11-09 补记（第二轮）：**F-06 进阶②/③ 已接线闭环**——
+> 进阶②「源变更差异高亮」core 计算 + UI 渲染 + Web 构建期快照链路全通
+> （§13.6.2），并修掉一个**会产生假变更**的实现缺陷：
+> 快照基线原先取的是 120 字符的 `snippet`（展示用截断版），
+> 跟当前全文比对会让长段落每次都被误报为「已变更」；
+> 现改为基线存**全文**并随产物发布（`PrebuiltIndex.ref_snapshots`）。
+> 进阶③「原生 Office 应用内定位」按「推导 / 执行 / 跨端抽象」三层接线（§13.6.3），
+> Excel 能落到单元格、PowerPoint 能落到页，Word / Visio / Drawio **如实降级为只打开文件**。
+> **386 项测试全绿**；**浏览器回归本地 37/37 全绿**（新增 C4 / C5）；
+> **wasm 706,686 B**（门禁余量 11.7%）；CLI 端到端 `export-web` 连跑三次验证
+> 「建基线 → 零假差异 → 精确产出变更」三种状态。
+>
 > 2026-11-09：**五项进阶功能已全部落地并闭环**，架构随之收敛：
 > F-07 多维过滤、F-10 双链图谱（力导向 + 构建期坐标）、F-11 流程图节点、
 > F-12 正则检索（自研零依赖引擎）、F-06 进阶① 编辑器内插入引用。
