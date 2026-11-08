@@ -647,33 +647,6 @@ wasm-opt `version 127 (version_127)`），`wasm_opt_issue = None`，
 对**线上 URL** 用系统 Edge 跑完整 **28/28 全通过**，0 console error、0 page error，
 4.33s，报告与截图：`docs/browser-validation/pages-live-ci-fallback/`。
 
-### 12.8 CI 外部依赖的三条兜底通道
-
-CI 构建期要拉三类外部产物，它们过去全部托管在 `objects.githubusercontent.com`
-这一个 CDN 上，链路抖动就整条流水线报废（run #13 直链 504、run #21 前置排查期间双通道皆败）。
-现在每个依赖都有「主通道 + 与 GitHub 无关的备胎」：
-
-| 依赖 | 主通道 | 兜底通道 | 关键点 |
-|---|---|---|---|
-| dx 0.7.10 | release 直链 → `api.github.com` 资产（各 3 次重试，共用官方 sha256） | **crates.io 源码编译** `cargo install dioxus-cli --locked --no-default-features` | dioxus-cli 0.7.10 已发布 `Cargo.lock`，`--locked` 可用且解析可复现；`default` feature 集为空，`--no-default-features` 等价 |
-| binaryen（wasm-opt） | release 直链 → API 资产 → 整目录安装到 dx 缓存 | **apt 的 wasm-opt** | 必须复制进 `~/.dx/tools/binaryen-<索引号>/bin/`，只留在 PATH 上没用——dx 只认缓存目录，目录里没有它就会自己去 GitHub 下载 |
-| wasm-bindgen-cli | release 直链 → API 资产 | **crates.io 源码编译** `cargo install wasm-bindgen-cli --locked` | 版本号取自项目 `Cargo.lock`（dx 也是按项目锁文件决定装哪个版本），避免版本漂移导致 dx 重装 |
-
-两个容易被忽略的细节：
-
-1. **两个版本号不是一回事**。dx 二进制里硬编码 `wasm-opt129`（工具索引号 → 缓存目录名
-   `binaryen-129`）与 `binaryen-version_127`（上游 release tag → 下载 URL）。
-   混用会让 dx 认为「未安装」而重新下载（run #19 卡死根因）。
-2. **`CARGO_HOME` 可能不可写**。GitHub runner 的 `CARGO_HOME` 默认是 `/usr/local/cargo`
-   （镜像系统路径），普通用户未必有写权限，`cargo install` 会报 Permission denied。
-   因此 `cargo install` 统一走一个封装：先试默认路径，失败则换 `$HOME/.cargo` 重试，
-   并同步更新 `CARGO_BIN` / `PATH` / `DX_PATH`，保证「装到哪」和「后面去哪找」是同一个位置。
-
-配套的静态检查：把工作流里所有 `run` 块的变量引用与块内赋值做比对，
-可以稳定报出未定义变量（用 `303c2a4` 跑能复现 `$TARGET_DIR`，当前版本为 0）。
-这类 bug 在 CI 上表现为「莫名其妙的失败 + 空日志」，靠肉眼看日志极难定位，
-静态比对能在提交前就拦下来。
-
 ### 12.7 wasm 体积优化（wasm-opt）
 
 `dx build --release` 默认 `--debug-symbols=true`，产物里带大量 DWARF 调试段；
@@ -704,6 +677,34 @@ CI 构建期要拉三类外部产物，它们过去全部托管在 `objects.gith
 > **插件化之后**：编辑器实现移出 core，但新增契约层与启动升级横幅，
 > 本地 wasm 1,338,199B → **724,696B（-45.8%）**，仍低于 800KB 门禁（余量约 75KB）；
 > CI/Linux（run #23）1,274,581B → **724,441B**，同样过门禁。
+
+
+### 12.8 CI 外部依赖的三条兜底通道
+
+CI 构建期要拉三类外部产物，它们过去全部托管在 `objects.githubusercontent.com`
+这一个 CDN 上，链路抖动就整条流水线报废（run #13 直链 504、run #21 前置排查期间双通道皆败）。
+现在每个依赖都有「主通道 + 与 GitHub 无关的备胎」：
+
+| 依赖 | 主通道 | 兜底通道 | 关键点 |
+|---|---|---|---|
+| dx 0.7.10 | release 直链 → `api.github.com` 资产（各 3 次重试，共用官方 sha256） | **crates.io 源码编译** `cargo install dioxus-cli --locked --no-default-features` | dioxus-cli 0.7.10 已发布 `Cargo.lock`，`--locked` 可用且解析可复现；`default` feature 集为空，`--no-default-features` 等价 |
+| binaryen（wasm-opt） | release 直链 → API 资产 → 整目录安装到 dx 缓存 | **apt 的 wasm-opt** | 必须复制进 `~/.dx/tools/binaryen-<索引号>/bin/`，只留在 PATH 上没用——dx 只认缓存目录，目录里没有它就会自己去 GitHub 下载 |
+| wasm-bindgen-cli | release 直链 → API 资产 | **crates.io 源码编译** `cargo install wasm-bindgen-cli --locked` | 版本号取自项目 `Cargo.lock`（dx 也是按项目锁文件决定装哪个版本），避免版本漂移导致 dx 重装 |
+
+两个容易被忽略的细节：
+
+1. **两个版本号不是一回事**。dx 二进制里硬编码 `wasm-opt129`（工具索引号 → 缓存目录名
+   `binaryen-129`）与 `binaryen-version_127`（上游 release tag → 下载 URL）。
+   混用会让 dx 认为「未安装」而重新下载（run #19 卡死根因）。
+2. **`CARGO_HOME` 可能不可写**。GitHub runner 的 `CARGO_HOME` 默认是 `/usr/local/cargo`
+   （镜像系统路径），普通用户未必有写权限，`cargo install` 会报 Permission denied。
+   因此 `cargo install` 统一走一个封装：先试默认路径，失败则换 `$HOME/.cargo` 重试，
+   并同步更新 `CARGO_BIN` / `PATH` / `DX_PATH`，保证「装到哪」和「后面去哪找」是同一个位置。
+
+配套的静态检查：把工作流里所有 `run` 块的变量引用与块内赋值做比对，
+可以稳定报出未定义变量（用 `303c2a4` 跑能复现 `$TARGET_DIR`，当前版本为 0）。
+这类 bug 在 CI 上表现为「莫名其妙的失败 + 空日志」，靠肉眼看日志极难定位，
+静态比对能在提交前就拦下来。
 
 ---
 
