@@ -59,4 +59,8 @@ dioxus = { version = "0.7", default-features = false }
 opt-level = 3
 lto = "thin"
 codegen-units = 1
-strip = true
+# 不要开 strip：wasm32 目标下较新的 rustc 会把 __wasm_bindgen_unstable /
+# target_features 自定义段一并剥掉，wasm-bindgen 随后报
+# "failed to read wasm-bindgen data"，release 站点直接构建失败（Linux CI 实测）。
+# 体积优化交给 dx 的 wasm-opt —— 它作用于 wasm-bindgen 输出之后，不会破坏这些段。
+strip = false
