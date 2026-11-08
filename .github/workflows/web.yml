@@ -50,18 +50,29 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev \
-            libssl-dev libxdo-dev patchelf binaryen
+            libssl-dev libxdo-dev patchelf binaryen \
+            cmake pkg-config zlib1g-dev
           # binaryen 提供 wasm-opt。apt 版本可能偏旧，因此这里只作为「兜底」，
           # 真正的版本自检放在体积门禁步骤里做（不满足能力要求会明确失败）。
           wasm-opt --version
+          # cmake / pkg-config / zlib1g-dev 是给 crates.io 兜底通道用的：
+          # `cargo install dioxus-cli` 会编译 git2 → libgit2-sys，
+          # 它需要 cmake + cc + zlib 才能把 vendored libgit2 建起来。
+          # GitHub 链路正常时这三个包是多余的，但装上几乎没有成本，
+          # 却能在 GitHub CDN 抽风时保住整条流水线。
 
-      - name: 安装 dx（官方预编译二进制 + sha256 校验）
+      - name: 安装 dx（官方预编译二进制 + sha256 校验；GitHub 链路失败回退 crates.io 源码编译）
         run: |
           set -euo pipefail
           ASSET="dx-x86_64-unknown-linux-gnu.tar.gz"
           SHA_ASSET="dx-x86_64-unknown-linux-gnu.sha256"
           BASE="https://github.com/DioxusLabs/dioxus/releases/download/v${DX_VERSION}"
           REPO_API="https://api.github.com/repos/DioxusLabs/dioxus"
+          # cargo install 与下面的 install 都落到 CARGO_HOME/bin，
+          # 用同一个变量保证「二进制来源」和「后续探测路径」始终一致。
+          CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+          export PATH="$CARGO_BIN:$PATH"
+          DX_PATH="$CARGO_BIN/dx"
 
           # 通道 A：releases/download 直链。通道 B：GitHub API 资产（按 asset id）。
           # 为什么不只留 A：release 直链走 objects.githubusercontent.com 的 CDN，
@@ -91,43 +102,94 @@ jobs:
 
           fetch_api() {
             # 通道 B：先取 release 元数据拿 asset id，再用 octet-stream 下载
+            # 解析失败时静默返回空 id：让上层把它当成「这一通道不可用」，
+            # 而不是抛一整屏 JSON traceback 干扰排查（网络失败时元数据不是 JSON）。
             local name="$1" out="$2" id
             id="$(curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors \
               -A "mkv-ci" "$REPO_API/releases/tags/v${DX_VERSION}" \
-              | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(a['id'] for a in d['assets'] if a['name']=='$name'))")"
+              | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(a['id'] for a in d['assets'] if a['name']=='$name'))" 2>/dev/null || true)"
             [ -n "$id" ] || return 1
             curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors \
               -H "Accept: application/octet-stream" -A "mkv-ci" \
               "$REPO_API/releases/assets/$id" -o "$out"
           }
 
+          # cargo_install <crate> <version> [额外 cargo install 参数...]
+          # crates.io 兜底通道统一入口。
+          # 为什么需要「换址重试」：GitHub runner 的 CARGO_HOME 默认是
+          # /usr/local/cargo（镜像里的系统路径），普通用户未必可写，
+          # cargo install 会报 Permission denied。换到 $HOME/.cargo 再试一次即可。
+          # 换址后必须同步更新 CARGO_BIN / PATH / DX_PATH，
+          # 保证「装到哪」和「后面去哪找」始终是同一个位置。
+          cargo_install() {
+            local crate="$1" ver="$2"; shift 2
+            if cargo install "$crate" --version "$ver" "$@"; then
+              return 0
+            fi
+            echo "::warning::cargo install $crate 到默认 CARGO_HOME 失败，改用 \$HOME/.cargo 重试"
+            export CARGO_HOME="$HOME/.cargo"
+            CARGO_BIN="$CARGO_HOME/bin"
+            export PATH="$CARGO_BIN:$PATH"
+            DX_PATH="$CARGO_BIN/dx"
+            cargo install "$crate" --version "$ver" "$@"
+          }
+
           echo "下载 $ASSET（优先 release 直链，失败回退 API 资产通道）"
-          download_with_retry dx.tar.gz 3 \
-            'fetch_release "$ASSET" dx.tar.gz || fetch_api "$ASSET" dx.tar.gz'
-
-          echo "下载 $SHA_ASSET"
-          download_with_retry dx.sha256 3 \
-            'fetch_release "$SHA_ASSET" dx.sha256 || fetch_api "$SHA_ASSET" dx.sha256'
-
-          # 官方 .sha256 同时列了 tar.gz 与 zip 两行；必须按文件名只取目标那一行，
-          # 否则 EXPECTED 会变成两行拼接的字符串，与实际 hash 永不相等（首跑即栽在这里）。
-          EXPECTED="$(awk -v f="$ASSET" '$2 == f { print $1 }' dx.sha256)"
-          [ -n "$EXPECTED" ] || { echo "::error::sha256 清单中没有 $ASSET"; cat dx.sha256; exit 1; }
-          ACTUAL="$(sha256sum dx.tar.gz | cut -d' ' -f1)"
-          echo "expected=$EXPECTED"
-          echo "actual  =$ACTUAL"
-          if [ "$EXPECTED" != "$ACTUAL" ]; then
-            echo "::error::dx sha256 校验失败（expected=$EXPECTED actual=$ACTUAL）"
-            exit 1
+          DX_FROM_CRATES=0
+          if ! download_with_retry dx.tar.gz 3 \
+            'fetch_release "$ASSET" dx.tar.gz || fetch_api "$ASSET" dx.tar.gz'; then
+            # 兜底通道 C：crates.io（源码编译）。
+            # 为什么不只留 GitHub 两个通道：Release 资产全部托管在
+            # objects.githubusercontent.com 的 CDN 上，CI runner 到这条链路的
+            # 成功率并不稳定（run #13 直链 504、run #21 双通道都失败）。
+            # crates.io 是完全独立的另一条链路，且 dioxus-cli 0.7.10 就在上面
+            # （已核对：未 yank，且该版本发布了 Cargo.lock，因此 --locked 可用，
+            #  依赖解析结果可复现）。
+            # 代价是从源码编译（约 5–12 分钟），但 Swatinem/rust-cache 会缓存
+            # cargo 构建产物；换来的是彻底绕开 GitHub CDN。
+            echo "::warning::dx 二进制下载失败（GitHub 双通道均不可用），改用 crates.io 源码编译"
+            if ! cargo_install dioxus-cli "${DX_VERSION}" --locked --no-default-features; then
+              echo "::error::dx 安装失败：GitHub 双通道与 crates.io 兜底全部不可用"
+              exit 1
+            fi
+            DX_FROM_CRATES=1
           fi
-          mkdir -p dx-release
-          tar -xzf dx.tar.gz -C dx-release
-          DX_BIN="$(find dx-release -type f -name dx | head -n1)"
-          [ -n "$DX_BIN" ] || { echo "::error::压缩包中未找到 dx"; tar -tzf dx.tar.gz; exit 1; }
-          chmod +x "$DX_BIN"
-          mkdir -p "$HOME/.cargo/bin"
-          install -m 0755 "$DX_BIN" "$HOME/.cargo/bin/dx"
-          dx --version
+
+          if [ "$DX_FROM_CRATES" != "1" ]; then
+            echo "下载 $SHA_ASSET"
+            download_with_retry dx.sha256 3 \
+              'fetch_release "$SHA_ASSET" dx.sha256 || fetch_api "$SHA_ASSET" dx.sha256'
+
+            # 官方 .sha256 同时列了 tar.gz 与 zip 两行；必须按文件名只取目标那一行，
+            # 否则 EXPECTED 会变成两行拼接的字符串，与实际 hash 永不相等（首跑即栽在这里）。
+            EXPECTED="$(awk -v f="$ASSET" '$2 == f { print $1 }' dx.sha256)"
+            [ -n "$EXPECTED" ] || { echo "::error::sha256 清单中没有 $ASSET"; cat dx.sha256; exit 1; }
+            ACTUAL="$(sha256sum dx.tar.gz | cut -d' ' -f1)"
+            echo "expected=$EXPECTED"
+            echo "actual  =$ACTUAL"
+            if [ "$EXPECTED" != "$ACTUAL" ]; then
+              echo "::error::dx sha256 校验失败（expected=$EXPECTED actual=$ACTUAL）"
+              exit 1
+            fi
+            mkdir -p dx-release
+            tar -xzf dx.tar.gz -C dx-release
+            DX_BIN="$(find dx-release -type f -name dx | head -n1)"
+            [ -n "$DX_BIN" ] || { echo "::error::压缩包中未找到 dx"; tar -tzf dx.tar.gz; exit 1; }
+            chmod +x "$DX_BIN"
+            mkdir -p "$CARGO_BIN"
+            install -m 0755 "$DX_BIN" "$DX_PATH"
+          fi
+
+          # 两条来源（release 预编译 / crates.io 源码编译）在这里汇合：
+          # 必须确认 dx 真的就位，否则后面探测版本号会静默取到空值。
+          if [ ! -x "$DX_PATH" ]; then
+            DX_PATH="$(command -v dx || true)"
+          fi
+          [ -n "$DX_PATH" ] && [ -x "$DX_PATH" ] || {
+            echo "::error::dx 未就位（预期路径：$CARGO_BIN/dx）"
+            exit 1
+          }
+          "$DX_PATH" --version
 
           # ---------- 预装 dx 构建期依赖（binaryen / wasm-bindgen） ----------
           # dx 在 release 构建时会自行下载这两个工具到 ~/.dx/tools/<name>-<ver>/：
@@ -197,8 +259,8 @@ jobs:
           # ---------- binaryen（wasm-opt） ----------
           BIN_TOOL_VERSION="129"
           BIN_RELEASE_VERSION="127"
-          T_DETECTED="$(grep -a -o 'wasm-opt[0-9]\{3\}' "$HOME/.cargo/bin/dx" | head -n1 | grep -o '[0-9]\{3\}' || true)"
-          R_DETECTED="$(grep -a -o 'binaryen-version_[0-9]\{3\}' "$HOME/.cargo/bin/dx" | head -n1 | grep -o '[0-9]\{3\}' || true)"
+          T_DETECTED="$(grep -a -o 'wasm-opt[0-9]\{3\}' "$DX_PATH" | head -n1 | grep -o '[0-9]\{3\}' || true)"
+          R_DETECTED="$(grep -a -o 'binaryen-version_[0-9]\{3\}' "$DX_PATH" | head -n1 | grep -o '[0-9]\{3\}' || true)"
           [ -n "$T_DETECTED" ] && BIN_TOOL_VERSION="$T_DETECTED"
           [ -n "$R_DETECTED" ] && BIN_RELEASE_VERSION="$R_DETECTED"
           BIN_TARGET="$HOME/.dx/tools/binaryen-${BIN_TOOL_VERSION}"
@@ -214,13 +276,49 @@ jobs:
                 "binaryen-version_${BIN_RELEASE_VERSION}-x86_64-linux.tar.gz" \
                 && echo "已安装 binaryen 到 $BIN_TARGET"
             else
-              echo "::warning::binaryen 下载失败，将退回 apt 的 wasm-opt（版本可能偏旧）"
+              # 兜底：改用 apt 安装的 wasm-opt。
+              # 关键点：必须落进 dx 的缓存目录，不能只用 PATH 上那个。
+              # dx 只认 ~/.dx/tools/binaryen-<索引号>/bin/wasm-opt，
+              # 目录里没有它就会自行去 GitHub 下载——就是那条不稳定的链路。
+              # apt 的 binaryen 包提供 /usr/bin/wasm-opt 与
+              # /usr/lib/x86_64-linux-gnu/libbinaryen.so，
+              # 正好能拼出官方的 bin/ + lib/ 布局。
+              echo "::warning::binaryen 下载失败，改用 apt 的 wasm-opt 兜底（版本可能偏旧）"
               rm -f binaryen.tar.gz
+              APT_WASM_OPT="$(command -v wasm-opt || true)"
+              if [ -n "$APT_WASM_OPT" ]; then
+                mkdir -p "$BIN_TARGET/bin" "$BIN_TARGET/lib"
+                cp -f "$APT_WASM_OPT" "$BIN_TARGET/bin/wasm-opt"
+                chmod +x "$BIN_TARGET/bin/wasm-opt"
+                # wasm-opt 动态链接 libbinaryen.so；系统路径里已有，
+                # 这里再放一份只是为了对齐官方目录结构。
+                for so in /usr/lib/x86_64-linux-gnu/libbinaryen.so*; do
+                  [ -e "$so" ] || continue
+                  cp -f "$so" "$BIN_TARGET/lib/" 2>/dev/null || true
+                done
+                echo "已从 apt 安装 wasm-opt 到 $BIN_TARGET/bin/wasm-opt"
+                "$BIN_TARGET/bin/wasm-opt" --version || true
+              else
+                echo "::error::PATH 上也没有 wasm-opt，dx 构建期将无法优化 wasm"
+              fi
             fi
           fi
 
           # ---------- wasm-bindgen-cli ----------
-          WB_VERSION="$(grep -a -o 'wasm-bindgen-cli@[0-9]\{1,2\}\.[0-9]\{1,2\}\.[0-9]\{1,2\}' "$HOME/.cargo/bin/dx" | head -n1 | sed 's/.*@//' || true)"
+          # 版本号优先取项目 Cargo.lock 里的 wasm-bindgen：
+          # dx 实际也是按项目锁文件决定要装哪个 wasm-bindgen-cli
+          # （dx 二进制里的字符串是 "wasm-bindgen-cli@."，版本号是运行时拼上去的），
+          # 所以这里必须跟项目锁文件保持一致，否则 dx 会认为版本不匹配再装一遍。
+          WB_VERSION=""
+          WB_LOCK="$(grep -A2 '^name = "wasm-bindgen"$' Cargo.lock 2>/dev/null \
+            | grep -m1 '^version' | cut -d'"' -f2 || true)"
+          if [ -n "$WB_LOCK" ]; then
+            WB_VERSION="$WB_LOCK"
+            echo "wasm-bindgen 版本来自 Cargo.lock：$WB_VERSION"
+          fi
+          if [ -z "$WB_VERSION" ]; then
+            WB_VERSION="$(grep -a -o 'wasm-bindgen-cli@[0-9]\{1,2\}\.[0-9]\{1,2\}\.[0-9]\{1,2\}' "$DX_PATH" | head -n1 | sed 's/.*@//' || true)"
+          fi
           if [ -z "$WB_VERSION" ]; then
             WB_VERSION="0.2.130"
           fi
@@ -237,8 +335,22 @@ jobs:
                 "wasm-bindgen-${WB_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
                 && echo "已安装 wasm-bindgen 到 $WB_TARGET"
             else
-              echo "::warning::wasm-bindgen 预装失败，dx 将自行下载（可能因网络失败）"
+              # 兜底：crates.io 源码编译 wasm-bindgen-cli。
+              # dx 自己也有这条兜底（其二进制里含
+              # "Failed to install prebuilt binary for wasm-bindgen-cli@... Compiling from source instead"），
+              # 但那是在构建中途才触发，一旦 crates.io 也抖动就会直接中断整条流水线
+              #（run #19 的日志就停在 "Installing wasm-bindgen-cli@0.2.130"）。
+              # 这里提前装好并放进 dx 的缓存目录，dx 就不会再自己去下载。
+              echo "::warning::wasm-bindgen 预装失败，改用 crates.io 源码编译"
               rm -f wasm-bindgen.tar.gz
+              if cargo_install wasm-bindgen-cli "${WB_VERSION}" --locked; then
+                mkdir -p "$WB_TARGET"
+                cp -f "$CARGO_BIN/wasm-bindgen" "$WB_TARGET/wasm-bindgen"
+                chmod +x "$WB_TARGET/wasm-bindgen"
+                echo "已从 crates.io 安装 wasm-bindgen 到 $WB_TARGET"
+              else
+                echo "::warning::wasm-bindgen 兜底也失败，dx 将自行下载"
+              fi
             fi
           fi
 
