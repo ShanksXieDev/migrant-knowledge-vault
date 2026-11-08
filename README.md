@@ -587,6 +587,22 @@ Playwright Chromium 28 项交互回归 / 上传 Pages 产物），`deploy` job �
 0 console error、0 page error、6.32s，报告与截图：`docs/browser-validation/pages-live-f06/`。
 至此 #7–#11 连续 success，第 5 次实测「push main → 自动重新发布」闭环稳定。
 
+**编辑器插件化上线复核（run #14，提交 `c17a19b` + `8bf2320`）**：三个编辑器拆成
+独立插件 crate 后推送，**run #13 `42465836598` Failed**——但失败点与代码无关：
+「安装 dx」步骤从 GitHub Release 直链拉取预编译二进制时，CDN 返回 504/502，
+后续全部门禁被跳过（annotations 为空，因为该步骤未写诊断）。根因确认后改为
+**双通道下载**（release 直链优先 + `api.github.com` 按 asset id 回退，各带重试，
+共用同一份官方 sha256 校验），并在失败路径写 `::error::` annotation。
+修复后 **run #14 `42466535003` Success**（5 分 38 秒）——verify 全部必需步骤通过
+（157 项测试 / 移动端编译 / wasm32 零 C 依赖 / release 构建 / 产物清单 +
+`wasm < 800KB` 门禁 / Playwright Chromium 28 项交互回归 / 上传 Pages 产物），
+`deploy` job 的 `pages_check` 与 `actions/deploy-pages@v4` 均 success。
+线上 `deploy-info.json` 的 `generated_at` 刷新为 `09:21:43Z`，
+`wasm_optimization` 记录 `1,274,581B → 724,483B`（CI/Linux），仍低于 800KB 门禁；
+首页 / 索引 / 元数据 / `.nojekyll` 全部 HTTP 200。对**线上 URL** 用系统 Edge 跑
+完整 **28/28 全通过**，0 console error、0 page error，报告与截图：
+`docs/browser-validation/pages-live-plugins/`。至此 #7–#12、#14 连续 success。
+
 ### 12.7 wasm 体积优化（wasm-opt）
 
 `dx build --release` 默认 `--debug-symbols=true`，产物里带大量 DWARF 调试段；
@@ -598,6 +614,7 @@ Playwright Chromium 28 项交互回归 / 上传 Pages 产物），`deploy` job �
 | 优化前 | 1,245,191 bytes（含新增位置片段与图谱代码） |
 | 优化后 | **667,161 bytes（约 651 KB）** |
 | 压缩率 | **-46.4%** |
+| 插件化后（run #14，CI/Linux） | 1,274,581 bytes → **724,483 bytes（约 708 KB）**，仍低于 800KB 门禁 |
 | 工具来源 | 优先 dx 自动下载的 `~/.dx/tools/binaryen-*/bin/wasm-opt`（版本与 wasm-bindgen 产物匹配），PATH 上的 binaryen 仅作兜底 |
 | 失败策略 | 找不到工具 / 未产出更小产物 → 只警告并保留原始 wasm，绝不阻断本地发布；CI 的 `wasm < 800KB` 门禁会据此判定失败 |
 
@@ -736,7 +753,9 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 > **F-06 跨格式引用已完成并上线**（§13.6）：引用处内联源片段、刷新与点选跳转；
 > **139 项测试 + 本地 28/28、线上 28/28 项浏览器回归全绿**（run #11 `42452731879` Success，
 > #7–#12 连续 success）；线上结论已回填。
-> **编辑器已插件化**（§9.5）：三个独立插件 crate + 契约 v1 + 启动检测 / 用户确认升级，
+> **编辑器已插件化并上线**（§9.5）：三个独立插件 crate + 契约 v1 + 启动检测 / 用户确认升级，
 > 对齐 `storytold/{gridcraft,deckcraft,wordcraft}` 的真实 commit；
-> **157 项测试 + 本地 28/28 项浏览器回归全绿**，wasm 724,696B 仍过 800KB 门禁；
-> 线上结论随本次 main 推送的 CI 复核回填。
+> **157 项测试 + 本地 28/28、线上 28/28 项浏览器回归全绿**（run #14 `42466535003` Success，
+> CI/Linux wasm 1,274,581B → 724,483B 仍过 800KB 门禁）；
+> **CI 下载双通道已加固**（§12.6）：release 直链 504 时回退 `api.github.com` 资产通道，
+> 修掉 run #13 因 dx 二进制下载失败而全流水线跳过的问题。
