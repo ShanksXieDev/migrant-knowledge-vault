@@ -105,7 +105,7 @@ jobs:
 
       # ---------- 质量门禁 3：release 静态站点 ----------
       - name: 构建静态站点（导出索引 → dx release → dist/）
-        run: bash scripts/publish-web.sh
+        run: bash scripts/publish-web.sh 2>&1 | tee -a /tmp/mkv-ci.log
 
       - name: 校验静态产物清单
         run: |
@@ -137,7 +137,7 @@ jobs:
           MKV_URL=http://127.0.0.1:8080 \
           MKV_BROWSER_CHANNEL=chromium \
           MKV_SHOT_DIR=docs/browser-validation/ci \
-            node scripts/browser-check.cjs
+            node scripts/browser-check.cjs 2>&1 | tee -a /tmp/mkv-ci.log
 
       - name: 上传验证报告与截图
         if: always()
@@ -147,12 +147,23 @@ jobs:
           path: docs/browser-validation/
           if-no-files-found: ignore
 
+      - name: 汇总失败诊断（写入 annotations）
+        if: failure()
+        run: |
+          set +e
+          echo "::error::CI 失败，/tmp/mkv-ci.log 末尾 30 行："
+          tail -n 30 /tmp/mkv-ci.log 2>/dev/null | while IFS= read -r line; do
+            [ -z "$line" ] || echo "::error::$line"
+          done
+
       - name: 上传失败诊断日志
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: ci-diagnostics
-          path: /tmp/mkv-cargo-test.log
+          path: |
+            /tmp/mkv-cargo-test.log
+            /tmp/mkv-ci.log
           if-no-files-found: ignore
 
       - name: 上传 Pages 产物
