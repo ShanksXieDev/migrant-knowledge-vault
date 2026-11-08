@@ -171,7 +171,24 @@ pub struct JsonRpcError {
 /// 由适配层（我们写的薄壳）翻译成上游的实际命令。
 /// 这样即使上游改了内部命令名，只需改适配层，宿主不变。
 pub mod methods {
-    /// 打开文档：`{"path": ..., "bytes_b64": ...}` → `{"state_b64": ...}`
+    /// 打开文档：`{"bytes_b64": ...}` → `{"state_b64": ...}`
+    ///
+    /// # 为什么 params 里没有 `path`
+    ///
+    /// 早期文档写的是 `{"path": ..., "bytes_b64": ...}`，但实现只传 `bytes_b64`——
+    /// 文档与实现不一致，属于**会误导适配器作者**的错误，这里明确纠正为只传内容。
+    ///
+    /// 理由有三：
+    /// 1. **契约层拿不到路径**。[`PluginBackend::open`] 的签名只接受字节
+    ///    （`fn open(&self, bytes: &[u8]) -> Result<PluginDocument>`），
+    ///    宿主把文件读成字节后交给后端，**路径不在这一层的语境里**。
+    /// 2. **内容优先于路径**。宿主读出的字节可能已经包含宿主侧的解析结果
+    ///    （如已展开的加密、已解码的流），让上游按路径**重新读盘**会得到
+    ///    与宿主手里那份**不一致**的内容——两份状态并存是更糟的错。
+    /// 3. **写回路径由宿主掌握**。保存时宿主把字节写回它自己知道的原路径，
+    ///    上游完全不需要知道文件在哪儿。
+    ///
+    /// 因此：**路径归宿主，内容归上游**。
     pub const OPEN: &str = "mkv/editor/open";
     /// 取视图：`{"state_b64": ...}` → `PluginView`
     pub const VIEW: &str = "mkv/editor/view";
@@ -389,6 +406,7 @@ impl PluginBackend for ExternalBackend {
     }
 
     fn open(&self, bytes: &[u8]) -> Result<PluginDocument> {
+        // 只传内容、不传路径：理由见 `methods::OPEN` 的文档（路径归宿主、内容归上游）。
         let params = serde_json::json!({
             "bytes_b64": encode_base64(bytes),
         });

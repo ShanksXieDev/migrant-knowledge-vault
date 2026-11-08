@@ -43,3 +43,15 @@ jieba-rs = { workspace = true, optional = true }
 tantivy-tokenizer-api = { workspace = true, optional = true }
 # 文件监听（P0）：仅在 native 目标启用，wasm32 依赖树不得引入
 notify = { workspace = true, optional = true }
+
+# 进程外 JSON-RPC 后端的跨平台端到端测试。
+# 用 `harness = false` 自制 runner：该测试需要**同时**扮演「测试运行器」与
+# 「被客户端 spawn 的迷你上游」，默认 libtest harness 无法在两者间切换；
+# 而用 `sh -c` / `cmd /C` 起服务器在两端语法不同，会让测试退化成 `#[cfg(unix)]`
+# ——Windows 零覆盖，而 Windows 正是本项目的主力开发环境。
+# 详见 tests/rpc_e2e.rs 顶部说明。
+[[test]]
+name = "rpc_e2e"
+path = "tests/rpc_e2e.rs"
+harness = false
+required-features = ["native"]
