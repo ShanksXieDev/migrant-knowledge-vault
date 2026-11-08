@@ -62,6 +62,7 @@ fn index(note: &str, with_refs: bool) -> PrebuiltIndex {
         links: Vec::new(),
         postings: Vec::new(),
         graph_positions: Vec::new(),
+        ref_snapshots: Default::default(),
     }
 }
 

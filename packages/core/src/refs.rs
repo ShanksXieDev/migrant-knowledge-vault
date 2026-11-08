@@ -135,7 +135,11 @@ pub struct SourceDiff {
 
 impl SourceDiff {
     /// 是否存在实际变更。
-    pub fn changed(&self) -> bool {
+    ///
+    /// 方法名刻意不叫 `changed`——Dioxus 的 `ReactiveContext` 有一个同名
+    /// blanket trait 方法（`changed(&self, other)`），在 rsx 作用域里会
+    /// 与同名固有方法争抢解析，表现为「需要 1 个参数却传了 0 个」。
+    pub fn has_changes(&self) -> bool {
         self.added > 0 || self.removed > 0
     }
 }
@@ -661,7 +665,7 @@ pub fn build_reference_views_with_snapshots(
                 .get(&snapshot_key(&res.path, &r.selector))
                 .and_then(|old| {
                     let d = diff_lines(old, &res.current);
-                    if d.changed() { Some(d) } else { None }
+                    if d.has_changes() { Some(d) } else { None }
                 });
             ReferenceView {
                 raw: r.raw,

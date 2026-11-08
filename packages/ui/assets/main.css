@@ -14,6 +14,11 @@
   --mkv-accent: #2f6feb;
   --mkv-accent-soft: #e8f0fe;
   --mkv-danger: #d8453c;
+  --mkv-danger-soft: rgba(216, 69, 60, 0.10);
+  --mkv-success: #1a7f37;
+  --mkv-success-soft: rgba(26, 127, 55, 0.12);
+  --mkv-warning: #9a6700;
+  --mkv-warning-soft: rgba(154, 103, 0, 0.12);
   --mkv-radius: 8px;
   --mkv-gap: 12px;
   --mkv-font: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
@@ -31,6 +36,11 @@
     --mkv-accent: #5b9bff;
     --mkv-accent-soft: #1e2c46;
     --mkv-danger: #ff6b62;
+    --mkv-danger-soft: rgba(255, 107, 98, 0.16);
+    --mkv-success: #4ac26b;
+    --mkv-success-soft: rgba(74, 194, 107, 0.16);
+    --mkv-warning: #e3b341;
+    --mkv-warning-soft: rgba(227, 179, 65, 0.16);
   }
 }
 
@@ -857,6 +867,37 @@ body {
 }
 .mkv-ref-unresolved { background: var(--mkv-surface-2); border-color: var(--mkv-danger); }
 .mkv-ref-unresolved .mkv-ref-card-head { color: var(--mkv-danger); }
+
+/* ---------- F-06 进阶项②：源变更差异高亮 / 进阶项③：原生应用内定位 ---------- */
+/* 卡片外层：把「引用卡片」与「在 Office 中打开」按钮并排放，
+   按钮是独立元素（不嵌在 button 里，避免非法的嵌套交互控件）。 */
+.mkv-ref-wrap {
+  display: inline-flex; align-items: flex-start; gap: 4px;
+  max-width: min(640px, 96%); vertical-align: top;
+}
+.mkv-ref-wrap .mkv-ref-card { max-width: none; }
+/* 差异块：只列变化的行，上下文行不展示 */
+.mkv-ref-diff {
+  display: flex; flex-direction: column; gap: 1px;
+  margin-top: 3px; padding: 3px 6px;
+  border-left: 2px solid var(--mkv-warning);
+  background: var(--mkv-warning-soft);
+  font-family: var(--mkv-mono); font-size: 0.78em;
+  white-space: pre-wrap;
+}
+.mkv-ref-diff-title { color: var(--mkv-warning); font-weight: 600; }
+.mkv-ref-diff-line { color: var(--mkv-text-muted); }
+.mkv-ref-diff-added {
+  color: var(--mkv-success);
+  background: var(--mkv-success-soft);
+}
+.mkv-ref-diff-removed {
+  color: var(--mkv-danger);
+  background: var(--mkv-danger-soft);
+  text-decoration: line-through;
+}
+/* 「在 Office 中打开」小按钮 */
+.mkv-ref-office { flex: 0 0 auto; align-self: flex-start; padding: 2px 6px; font-size: 11px; }
 
 /* ---------- F-06 进阶项①：编辑器内「插入引用」入口 ---------- */
 .mkv-ref-insert {

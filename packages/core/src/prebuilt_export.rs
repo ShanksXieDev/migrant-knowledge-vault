@@ -33,6 +33,30 @@ pub fn build_index(
     dict_text: Option<&str>,
     root: &str,
 ) -> crate::Result<PrebuiltIndex> {
+    build_index_with_snapshots(docs, texts, links, dict_text, root, &HashMap::new())
+}
+
+/// 从已建立的 Vault 生成预构建索引产物，并带上**引用源片段快照**。
+///
+/// # 快照的作用
+///
+/// F-06 进阶②要在引用卡片上显示「源片段相对上次看到的内容变了什么」。
+/// Native 端有持久化的快照基线（`meta` 里的引用快照表），
+/// 但 Web 端只有**构建期产物**，运行时无从得知「上次是什么样」。
+///
+/// 因此构建端接受一份「上次看到的源片段」快照（键见
+/// [`crate::refs::snapshot_key`]），据此算出差异并写进产物的 `refs[].diff`。
+/// Web 端随后**零运行时开销**即可显示差异高亮。
+///
+/// 快照只参与构建、不进产物，因此不增加产物体积。
+pub fn build_index_with_snapshots(
+    docs: &[crate::types::DocumentRecord],
+    texts: &HashMap<String, String>,
+    links: &[LinkRecord],
+    dict_text: Option<&str>,
+    root: &str,
+    snapshots: &HashMap<String, String>,
+) -> crate::Result<PrebuiltIndex> {
     // 分词器：与运行时索引一致（含领域词典）
     let mut tokenizer = JiebaTokenizer::new();
     if let Some(dict) = dict_text {
@@ -97,6 +121,20 @@ pub fn build_index(
         .collect();
     let node_map = crate::diagram::build_node_map(&storage, &node_targets);
 
+    // F-06 进阶②：采集**当前**的引用源片段全文，作为下一次构建的基线。
+    //
+    // 必须在算 diff **之前**采集，但**不能**用它当本次的基线——
+    // 那等于「拿现在和现在比」，永远没有差异。
+    // 本次的基线由调用方传入（上一份产物的 `ref_snapshots`）。
+    let mut current_snapshots: HashMap<String, String> = HashMap::new();
+    for (_path, text, _format) in &all_docs {
+        for (target, selector, current) in
+            crate::refs::resolve_reference_sources(text, &all_docs, &node_map)
+        {
+            current_snapshots.insert(crate::refs::snapshot_key(&target, &selector), current);
+        }
+    }
+
     let prebuilt_docs: Vec<PrebuiltDoc> = docs
         .iter()
         .map(|d| {
@@ -112,7 +150,14 @@ pub fn build_index(
                 // 精确定位：按格式把原文切成带标签的片段，随索引一起打包。
                 segments: crate::locate::segment_text(&text, format),
                 // F-06：构建期把每条引用的源片段快照一起打包，Web 只读端零网络即可显示。
-                refs: crate::refs::build_reference_views_with_nodes(&text, &all_docs, &node_map),
+                // 带快照版本：源片段相对「上次看到的内容」有变化时，差异摘要一并打包，
+                // Web 端据此显示「源已变更」的高亮块（F-06 进阶②）。
+                refs: crate::refs::build_reference_views_with_snapshots(
+                    &text,
+                    &all_docs,
+                    &node_map,
+                    snapshots,
+                ),
                 // F-07：标签随索引一起打包，Web 端过滤面板无需额外请求。
                 tags: crate::tags::extract_tags(&text, &dir_of(&d.path), format),
                 // F-11：流程图节点清单随索引一起打包，Web 端节点级引用可用。
@@ -130,6 +175,8 @@ pub fn build_index(
         links: links.to_vec(),
         postings: posting_list,
         graph_positions: Vec::new(),
+        // 本次采集到的当前基线随产物一起发布，供下一次构建做差异比对。
+        ref_snapshots: current_snapshots,
     };
     // F-10：图谱坐标在构建期算好，随产物发布；Web 端运行期只查表。
     attach_graph_positions(&mut index);
@@ -297,5 +344,166 @@ mod tests {
         let g = back.graph_snapshot();
         assert_eq!(g.nodes.len(), 2);
         assert_eq!(g.edges.len(), 1);
+    }
+
+    /// F-06 进阶②：产物带出**当前**的引用源片段全文基线。
+    #[test]
+    fn exports_full_text_reference_snapshot_baseline() {
+        let docs = vec![
+            crate::types::DocumentRecord {
+                path: "台账.xlsx".into(),
+                title: "台账".into(),
+                format: "Excel".into(),
+                size: 1,
+                modified_at: 1,
+                content_hash: String::new(),
+            },
+            crate::types::DocumentRecord {
+                path: "note.md".into(),
+                title: "笔记".into(),
+                format: "Markdown".into(),
+                size: 1,
+                modified_at: 1,
+                content_hash: String::new(),
+            },
+        ];
+        let mut texts = HashMap::new();
+        texts.insert(
+            "台账.xlsx".to_string(),
+            "台账: 零件号 | 模具编号\n台账: PN-1024 | MDL-08\n".to_string(),
+        );
+        texts.insert(
+            "note.md".to_string(),
+            "引用：@台账.xlsx#第2行\n".to_string(),
+        );
+
+        let idx = build_index(&docs, &texts, &[], None, "测试库").unwrap();
+        let key = crate::refs::snapshot_key("台账.xlsx", "第2行");
+        let baseline = idx.ref_snapshots.get(&key).map(String::as_str).unwrap_or("");
+        assert!(
+            baseline.contains("台账: PN-1024 | MDL-08"),
+            "基线必须是**完整**源片段文本，而不是截断版 snippet，实际 {baseline:?}"
+        );
+        // 片段原文带换行，snippet 则是 trim 过的展示文本——基线必须用前者。
+        assert!(
+            baseline.ends_with('\n'),
+            "基线应保留片段原文（含换行），实际 {baseline:?}"
+        );
+        assert!(
+            idx.docs[1].refs[0].snippet != baseline,
+            "基线不应等同于展示用的 snippet"
+        );
+        // 产物序列化 → 解析后基线仍在（下一轮构建据此算差异）。
+        let back = crate::prebuilt::PrebuiltIndex::from_json(&idx.to_json().unwrap()).unwrap();
+        assert_eq!(back.ref_snapshots, idx.ref_snapshots);
+    }
+
+    /// F-06 进阶②：**长段落不得产生假差异**。
+    ///
+    /// 这是「基线必须存全文」的直接理由：若基线取的是 120 字符的
+    /// `snippet`，长段落每次构建都会被判成「截断处之后全变了」。
+    #[test]
+    fn long_paragraph_against_full_text_baseline_produces_no_false_diff() {
+        let long = format!("首句。{}尾句。", "中间内容".repeat(40));
+        assert!(long.chars().count() > 120, "测试样本必须超过 120 字符截断线");
+        let docs = vec![
+            crate::types::DocumentRecord {
+                path: "长文.md".into(),
+                title: "长文".into(),
+                format: "Markdown".into(),
+                size: 1,
+                modified_at: 1,
+                content_hash: String::new(),
+            },
+            crate::types::DocumentRecord {
+                path: "note.md".into(),
+                title: "笔记".into(),
+                format: "Markdown".into(),
+                size: 1,
+                modified_at: 1,
+                content_hash: String::new(),
+            },
+        ];
+        let mut texts = HashMap::new();
+        texts.insert("长文.md".to_string(), long.clone());
+        texts.insert("note.md".to_string(), "引用：@长文.md#1\n".to_string());
+
+        // 第一轮：建立基线。
+        let first = build_index(&docs, &texts, &[], None, "测试库").unwrap();
+        // 第二轮：用第一轮的基线比对，内容没变 → 不应有差异。
+        let second =
+            build_index_with_snapshots(&docs, &texts, &[], None, "测试库", &first.ref_snapshots)
+                .unwrap();
+        let refs = &second.docs[1].refs;
+        assert_eq!(refs.len(), 1);
+        assert!(
+            refs[0].diff.is_none(),
+            "内容未变时不得报差异（长段落也不该因截断而误报）：{:?}",
+            refs[0].diff
+        );
+    }
+
+    /// F-06 进阶②：源片段真的改了 → 产出差异，且新增 / 删除都能看出来。
+    #[test]
+    fn changed_source_produces_diff_against_baseline() {
+        let docs = vec![
+            crate::types::DocumentRecord {
+                path: "台账.xlsx".into(),
+                title: "台账".into(),
+                format: "Excel".into(),
+                size: 1,
+                modified_at: 1,
+                content_hash: String::new(),
+            },
+            crate::types::DocumentRecord {
+                path: "note.md".into(),
+                title: "笔记".into(),
+                format: "Markdown".into(),
+                size: 1,
+                modified_at: 1,
+                content_hash: String::new(),
+            },
+        ];
+        let mut texts = HashMap::new();
+        texts.insert(
+            "台账.xlsx".to_string(),
+            "台账: 零件号 | 模具编号\n台账: PN-1024 | MDL-08\n".to_string(),
+        );
+        texts.insert(
+            "note.md".to_string(),
+            "引用：@台账.xlsx#第2行\n".to_string(),
+        );
+
+        let first = build_index(&docs, &texts, &[], None, "测试库").unwrap();
+        assert!(first.ref_snapshots.contains_key(&crate::refs::snapshot_key("台账.xlsx", "第2行")));
+
+        // 源文件被改：模具编号从 MDL-08 变成 MDL-09。
+        let mut changed = texts.clone();
+        changed.insert(
+            "台账.xlsx".to_string(),
+            "台账: 零件号 | 模具编号\n台账: PN-1024 | MDL-09\n".to_string(),
+        );
+        let second =
+            build_index_with_snapshots(&docs, &changed, &[], None, "测试库", &first.ref_snapshots)
+                .unwrap();
+        let diff = second.docs[1].refs[0]
+            .diff
+            .as_ref()
+            .expect("源片段变更应产出差异");
+        assert!(diff.has_changes());
+        assert!(
+            diff.lines
+                .iter()
+                .any(|l| l.kind == crate::refs::DiffLineKind::Added),
+            "差异里应能看到新增行：{:?}",
+            diff.lines
+        );
+        assert!(
+            diff.lines
+                .iter()
+                .any(|l| l.kind == crate::refs::DiffLineKind::Removed),
+            "差异里应能看到删除行：{:?}",
+            diff.lines
+        );
     }
 }

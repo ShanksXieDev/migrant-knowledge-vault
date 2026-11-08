@@ -240,6 +240,24 @@ impl EditorRouter {
         spawned.map_err(|e| Error::Config(format!("外部唤起失败: {e}")))?;
         Ok(())
     }
+
+    /// 执行「唤起原生 Office 应用并定位到片段」的方案（F-06 进阶③）。
+    ///
+    /// 只 `spawn` 不 `wait`：Office 由用户自行关闭，保存后由 P0 文件监听增量更新索引。
+    /// 命令以 **argv** 形态下发、不经 shell，因此路径里的 `%` / `&` 不会被二次解析
+    /// （这一点对 Windows 的协议 URI 尤其重要）。
+    ///
+    /// 方案里已带定位锚点（如 `ms-excel:...#台账!B2`），本函数只负责把它交给系统。
+    pub fn launch_office_plan(plan: &crate::office_locator::OfficeLaunchPlan) -> Result<()> {
+        if !std::path::Path::new(&plan.abs_path).exists() {
+            return Err(Error::NotFound(plan.abs_path.clone().into()));
+        }
+        std::process::Command::new(&plan.command.program)
+            .args(&plan.command.args)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| Error::Config(format!("唤起原生应用失败: {e}")))
+    }
 }
 
 /// 供 UI / 诊断使用：当前格式是否有已安装的插件。

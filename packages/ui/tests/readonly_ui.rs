@@ -36,6 +36,7 @@ fn readonly_ctx() -> VaultContext {
         links: Vec::new(),
         postings: Vec::new(),
         graph_positions: Vec::new(),
+        ref_snapshots: Default::default(),
     };
     let ctx = VaultContext::with_service(Box::new(PrebuiltService::new(index)));
     let mut current_doc = ctx.current_doc;

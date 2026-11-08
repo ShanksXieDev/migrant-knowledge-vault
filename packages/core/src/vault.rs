@@ -314,6 +314,47 @@ impl Vault {
         crate::editor::EditorRouter::launch_external(&target)
     }
 
+    /// 在原生 Office 应用内定位到指定片段（F-06 进阶③）。
+    ///
+    /// # `locator` 是什么
+    ///
+    /// 可以是**片段标签**（如「台账 · 第 2 行」）或**引用选择器**（如「第 2 行」）。
+    /// 内部**先按标签推导**——Excel 的标签带工作表名，能拿到完整锚点
+    /// （`ms-excel:...#台账!A2`）；标签推不出位置时再回退到按选择器推导。
+    ///
+    /// # 返回
+    ///
+    /// 返回**唤起方案**而非单纯的成功标记：方案里带
+    /// 「能否定位到片段级」与「为什么这样降级」，
+    /// UI 据此如实告知用户（Word / Visio / Drawio 没有公开的应用内定位协议，
+    /// 只能打开文件——这是硬结论，不假装能定位）。
+    pub fn open_in_office(
+        &self,
+        rel_path: &str,
+        locator: &str,
+    ) -> Result<crate::office_locator::OfficeLaunchPlan> {
+        let Some(platform) = crate::office_locator::current_platform() else {
+            return Err(Error::Config(
+                "当前平台没有可用的原生应用唤起能力".into(),
+            ));
+        };
+        let Some(abs) = self.storage.absolute_path(rel_path) else {
+            return Err(Error::NotFound(rel_path.to_string().into()));
+        };
+        let format = Format::from_path(Path::new(rel_path)).unwrap_or(Format::Markdown);
+        let fragment = match crate::office_locator::fragment_from_label(format, locator) {
+            // 标签推不出具体位置（空标签 / 非数字）→ 回退到选择器推导。
+            crate::office_locator::Fragment::Document => {
+                crate::office_locator::fragment_from_selector(format, locator)
+            }
+            other => other,
+        };
+        let plan =
+            crate::office_locator::plan_office_launch(format, rel_path, &abs, &fragment, platform);
+        crate::editor::EditorRouter::launch_office_plan(&plan)?;
+        Ok(plan)
+    }
+
     /// 保存内置编辑结果：写回原生文件 → 增量重建该文档的索引与双链。
     ///
     /// 返回是否成功（写盘成功但索引更新失败时返回错误并说明阶段）。

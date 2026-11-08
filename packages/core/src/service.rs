@@ -147,6 +147,35 @@ pub trait KnowledgeService: Send + Sync {
         Err(crate::Error::Config("当前后端不支持外部唤起".into()))
     }
 
+    /// 是否支持在**原生 Office 应用内**定位到引用片段（F-06 进阶③）。
+    ///
+    /// Web 端没有本地进程能力，返回 false；Native 端返回 true。
+    fn supports_office_locate(&self) -> bool {
+        false
+    }
+
+    /// 在原生 Office 应用内定位到指定片段（F-06 进阶③）。
+    ///
+    /// 返回值是唤起方案：它同时回答两个问题——
+    /// - **能不能定位到片段级**（[`OfficeLaunchPlan::is_precise`]）：
+    ///   Excel 能落到单元格、PowerPoint 能落到页；
+    ///   Word / Visio / Drawio 没有公开的应用内定位协议，只能打开文件；
+    /// - **为什么这样降级**（`note`）：UI 要如实告诉用户，而不是假装定位成功。
+    ///
+    /// 推导与执行分离：本方法在 Native 端**先推导方案再执行**，推导逻辑是纯函数
+    /// （见 [`crate::office_locator`]），因此可以在任意宿主上单测。
+    ///
+    /// 默认不支持：Web 只读后端应给出明确错误。
+    fn open_in_office(
+        &self,
+        _rel_path: &str,
+        _selector: &str,
+    ) -> crate::Result<crate::office_locator::OfficeLaunchPlan> {
+        Err(crate::Error::Config(
+            "当前后端不支持原生 Office 应用内定位".into(),
+        ))
+    }
+
     /// 是否支持内置编辑（GridCraft / DeckCraft / WordCraft）。
     ///
     /// Web 端为预构建只读索引，返回 false。

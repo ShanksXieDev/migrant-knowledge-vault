@@ -115,6 +115,27 @@ pub struct PrebuiltIndex {
     /// 运行期退回确定性环形布局（图谱面板照常渲染，不白屏）。
     #[serde(default)]
     pub graph_positions: Vec<crate::locate::GraphPosition>,
+    /// 引用源片段的**全文快照基线**（F-06 进阶②）。
+    ///
+    /// 键为 [`crate::refs::snapshot_key`]（目标路径 + 选择器），
+    /// 值为上次构建时看到的源片段**完整文本**。
+    ///
+    /// # 为什么必须存全文而不是 snippet
+    ///
+    /// `ReferenceView.snippet` 是给卡片内联显示用的**截断版**（120 字符）。
+    /// 若拿它当基线，跟当前**全文**做差异比对，任何超过 120 字符的段落
+    /// 都会在截断处被判成「删除 + 新增」——用户看到的是**假变更**。
+    ///
+    /// # 为什么随产物走
+    ///
+    /// Web 端是纯静态的：浏览器没有持久化存储，「上次是什么样」只能由
+    /// 构建端带过来。基线随产物一起发布 → 下一次构建读上一份产物的基线
+    /// → 差异计算完全自洽，且**不依赖本机是否留有知识库索引目录**。
+    ///
+    /// `#[serde(default)]`：schema v1 旧产物没有该字段时为空表，
+    /// 表现为「首次见到该引用」，不产出差异（不是错误）。
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub ref_snapshots: std::collections::HashMap<String, String>,
 }
 
 impl PrebuiltIndex {
@@ -128,6 +149,7 @@ impl PrebuiltIndex {
             links: Vec::new(),
             postings: Vec::new(),
             graph_positions: Vec::new(),
+            ref_snapshots: Default::default(),
         }
     }
 
@@ -706,6 +728,7 @@ mod tests {
                 },
             ],
             graph_positions: Vec::new(),
+            ref_snapshots: Default::default(),
         }
     }
 

@@ -553,12 +553,25 @@ fn cmd_export_web(root: PathBuf, rest: &[String]) -> Result<()> {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| root.to_string_lossy().to_string());
 
-    let index = mkv_core::prebuilt_export::build_index(
+    // F-06 进阶②：把**上一次产物**里的引用片段当作快照基线，
+    // 这样源片段发生变化时，差异摘要能随新产物一起打包，
+    // Web 只读端无需任何运行时状态即可显示「源已变更」高亮。
+    // 快照只参与构建、不进产物，因此不增加产物体积。
+    let snapshots = load_ref_snapshots(&out_path);
+    if !snapshots.is_empty() {
+        println!(
+            "[mkv] 引用快照基线：{} 条（用于源变更差异高亮）",
+            snapshots.len()
+        );
+    }
+
+    let index = mkv_core::prebuilt_export::build_index_with_snapshots(
         &docs,
         &texts,
         &links,
         dict_text.as_deref(),
         &root_name,
+        &snapshots,
     )
     .context("构建预构建索引失败")?;
 
@@ -578,6 +591,31 @@ fn cmd_export_web(root: PathBuf, rest: &[String]) -> Result<()> {
         index.links.len()
     );
     Ok(())
+}
+
+/// 从**上一次产物**重建引用源片段快照基线（F-06 进阶②）。
+///
+/// 键为 [`mkv_core::refs::snapshot_key`]（目标路径 + 选择器），
+/// 值为上次构建时看到的源片段**完整文本**。
+///
+/// # 为什么只认 `ref_snapshots`，不认 `refs[].snippet`
+///
+/// `snippet` 是给卡片内联显示用的**截断版**（120 字符）。拿它当基线，
+/// 跟当前**全文**比对时，任何超过 120 字符的段落都会在截断处被判成
+/// 「删除 + 新增」——用户看到的是**根本不存在的变更**。
+///
+/// 产物不存在 / 解析失败时返回空表：快照是**增强**，
+/// 缺失（首次构建、产物被手工改坏）不应阻断导出。
+fn load_ref_snapshots(out_path: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let Ok(text) = std::fs::read_to_string(out_path) else {
+        return map;
+    };
+    let Ok(old) = mkv_core::prebuilt::PrebuiltIndex::from_json(&text) else {
+        return map;
+    };
+    map.extend(old.ref_snapshots);
+    map
 }
 
 /// 监听知识库文件变化，增量更新索引与双链（Ctrl+C 退出）。

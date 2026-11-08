@@ -624,6 +624,20 @@ pub fn PreviewPane(ctx: VaultContext) -> Element {
 ///
 /// `source_hash` 以短指纹形式给出；源文件更新后指纹随之变化，
 /// 配合 Desktop 的文件监听自动刷新与「↻ 刷新引用」按钮即可发现变更。
+///
+/// # 进阶②：源变更差异高亮
+///
+/// 指纹只能回答「变没变」，回答不了「变了什么」。因此当引用视图带上
+/// [`mkv_core::refs::SourceDiff`]（来源见 `core::refs::build_reference_views_with_snapshots`）时，
+/// 卡片额外渲染一个差异块，只列**变化的行**（新增 / 删除），上下文行不展示——
+/// 引用卡片要的是「一眼看出改了什么」，不是完整 diff。
+///
+/// # 进阶③：原生 Office 应用内定位
+///
+/// 若当前后端支持（Native 端支持，Web 只读端不支持），
+/// 卡片旁多一个「在 Office 中打开」按钮：唤起原生应用并把光标落到
+/// 目标位置（Excel 单元格 / PPT 页）。能否精确定位由格式决定，
+/// 不能时只打开文件，UI 会如实说明。
 #[component]
 pub fn ReferenceCard(ctx: VaultContext, view: mkv_core::refs::ReferenceView) -> Element {
     let path = view.target_path.clone();
@@ -641,41 +655,107 @@ pub fn ReferenceCard(ctx: VaultContext, view: mkv_core::refs::ReferenceView) -> 
     let idx = view.segment_index;
     let resolved = view.resolved;
 
+    // 进阶②：只保留有变化的行；差异摘要为空时整块不渲染。
+    let diff_view = view.diff.as_ref().filter(|d| d.has_changes()).map(|d| {
+        let lines: Vec<(mkv_core::refs::DiffLineKind, String)> = d
+            .lines
+            .iter()
+            .filter(|l| l.kind != mkv_core::refs::DiffLineKind::Context)
+            .map(|l| (l.kind, l.text.clone()))
+            .collect();
+        (d.added, d.removed, lines)
+    });
+
+    // 进阶③：只有支持本地进程的后端才显示「在 Office 中打开」。
+    let office_supported = ctx.service.read().supports_office_locate();
+    // 定位用的定位串：优先用片段标签（Excel 的标签带工作表名，能拿到完整锚点），
+    // 标签缺失时回退到引用选择器。
+    let locator = if label.trim().is_empty() {
+        view.selector.clone()
+    } else {
+        label.clone()
+    };
+    // 两个按钮各自闭包捕获一份 `path`，避免 move 冲突。
+    let path_nav = path.clone();
+    let path_office = path.clone();
+
     rsx! {
-        button {
-            class: if resolved {
-                "mkv-ref-card"
-            } else {
-                "mkv-ref-card mkv-ref-unresolved"
-            },
-            title: "源片段内容指纹 {fingerprint}；指纹变化表示源已更新",
-            onclick: move |_| {
-                if !resolved {
-                    ctx.status.set(format!("引用未解析：{raw}"));
-                    return;
+        div { class: "mkv-ref-wrap",
+            button {
+                class: if resolved {
+                    "mkv-ref-card"
+                } else {
+                    "mkv-ref-card mkv-ref-unresolved"
+                },
+                title: "源片段内容指纹 {fingerprint}；指纹变化表示源已更新",
+                onclick: move |_| {
+                    if !resolved {
+                        ctx.status.set(format!("引用未解析：{raw}"));
+                        return;
+                    }
+                    let mut current_doc = ctx.current_doc;
+                    let mut backlinks = ctx.backlinks;
+                    let mut list_mode = ctx.list_mode;
+                    current_doc.set(path_nav.clone());
+                    backlinks.set(ctx.service.read().backlinks(&path_nav));
+                    ctx.focus.set(Some(mkv_core::locate::HitLocation {
+                        label: label.clone(),
+                        kind: "reference".to_string(),
+                        segment_index: idx,
+                        matched: String::new(),
+                        snippet: snippet.clone(),
+                    }));
+                    list_mode.set(ListMode::Documents);
+                    ctx.status.set(format!("已跳到 {} 的 {}", name_of(&path), label));
+                },
+                if resolved {
+                    span { class: "mkv-ref-card-head", "{head}" }
+                    span { class: "mkv-ref-card-body", "{body}" }
+                } else {
+                    span { class: "mkv-ref-card-head", "{head}" }
                 }
-                let mut current_doc = ctx.current_doc;
-                let mut backlinks = ctx.backlinks;
-                let mut list_mode = ctx.list_mode;
-                current_doc.set(path.clone());
-                backlinks.set(ctx.service.read().backlinks(&path));
-                ctx.focus.set(Some(mkv_core::locate::HitLocation {
-                    label: label.clone(),
-                    kind: "reference".to_string(),
-                    segment_index: idx,
-                    matched: String::new(),
-                    snippet: snippet.clone(),
-                }));
-                list_mode.set(ListMode::Documents);
-                ctx.status.set(format!("已跳到 {} 的 {}", name_of(&path), label));
-            },
-            if resolved {
-                span { class: "mkv-ref-card-head", "{head}" }
-                span { class: "mkv-ref-card-body", "{body}" }
-            } else {
-                span { class: "mkv-ref-card-head", "{head}" }
+                if let Some((added, removed, lines)) = diff_view {
+                    span { class: "mkv-ref-diff",
+                        span { class: "mkv-ref-diff-title",
+                            "源已变更：新增 {added} 行 / 删除 {removed} 行"
+                        }
+                        for (kind, text) in lines {
+                            span { class: diff_line_class(kind), "{text}" }
+                        }
+                    }
+                }
+            }
+            if office_supported {
+                button {
+                    class: "mkv-btn mkv-btn-sm mkv-ref-office",
+                    title: "唤起原生 Office 应用并定位到该片段（Excel 到单元格、PPT 到页）",
+                    onclick: move |_| {
+                        let mut status = ctx.status;
+                        match ctx.service.read().open_in_office(&path_office, &locator) {
+                            Ok(plan) => {
+                                let where_ = if plan.is_precise() {
+                                    "已定位到片段"
+                                } else {
+                                    "已打开文件（该格式无法在应用内定位到片段）"
+                                };
+                                status.set(format!("{where_}：{}", plan.note));
+                            }
+                            Err(e) => status.set(format!("原生应用内定位失败：{e}")),
+                        }
+                    },
+                    "在 Office 中打开"
+                }
             }
         }
+    }
+}
+
+/// 差异行的样式类（新增 / 删除）。
+fn diff_line_class(kind: mkv_core::refs::DiffLineKind) -> &'static str {
+    match kind {
+        mkv_core::refs::DiffLineKind::Added => "mkv-ref-diff-line mkv-ref-diff-added",
+        mkv_core::refs::DiffLineKind::Removed => "mkv-ref-diff-line mkv-ref-diff-removed",
+        mkv_core::refs::DiffLineKind::Context => "mkv-ref-diff-line",
     }
 }
 

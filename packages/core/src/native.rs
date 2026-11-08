@@ -189,6 +189,27 @@ impl KnowledgeService for NativeService {
         }
     }
 
+    /// 支持在原生 Office 应用内定位（F-06 进阶③）。
+    ///
+    /// Native 端有本地进程能力；Web 端是预构建只读索引，没有这条路径。
+    fn supports_office_locate(&self) -> bool {
+        true
+    }
+
+    /// 在原生 Office 应用内定位到引用片段（F-06 进阶③）。
+    ///
+    /// 返回唤起方案（含定位能力与降级原因），供 UI 如实展示。
+    fn open_in_office(
+        &self,
+        rel_path: &str,
+        locator: &str,
+    ) -> crate::Result<crate::office_locator::OfficeLaunchPlan> {
+        match with(|v| v.open_in_office(rel_path, locator)) {
+            Some(result) => result,
+            None => Err(crate::Error::Config("知识库未打开".into())),
+        }
+    }
+
     fn locate(&self, rel_path: &str, query: &str) -> Option<crate::locate::HitLocation> {
         let text = self.read_document(rel_path)?;
         let format = crate::format::Format::from_path(std::path::Path::new(rel_path))

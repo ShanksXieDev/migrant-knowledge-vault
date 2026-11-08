@@ -147,6 +147,16 @@
       "detail": "status=\"已刷新 4 条跨格式引用\""
     },
     {
+      "name": "C4 Web 端不显示「在 Office 中打开」按钮",
+      "ok": true,
+      "detail": "mkv-ref-office 按钮数=0（应为 0），当前页引用卡片 4 张（须 ≥4，否则本项无意义）"
+    },
+    {
+      "name": "C5 源未变更时引用卡片不显示差异块",
+      "ok": true,
+      "detail": "差异块=0（应为 0）/ 引用包裹层=4（须 ≥4）"
+    },
+    {
       "name": "C3 点选引用跳到源文档并定位片段",
       "ok": true,
       "detail": "预览=\"03-台账/模具台账.xlsx\" 高亮片段=1"
@@ -190,7 +200,7 @@
   "pageErrors": [],
   "consoleErrors": [],
   "fatal": null,
-  "durationMs": 4354,
+  "durationMs": 4239,
   "screenshots": [
     "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\01-first-paint.png",
     "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\02-document-backlinks.png",
