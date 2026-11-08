@@ -526,15 +526,25 @@ MKV_WEB_INDEX_URL="https://your.site/mkv-index.json" scripts/publish-web.sh
 该链路已用 Playwright 拦截请求做过**真实浏览器实测（5/5 全通过）**：有效产物热替换、
 HTTP 500 回落、空索引回落、顶栏知识库名同步。报告：`docs/browser-validation/remote-report.json`。
 
-> ⚠️ **Git Bash 下不要写 `MKV_WEB_INDEX_URL=/remote-index.json`** —— MSYS 会把它转成
+> ⚠️ **Git Bash 下不要写 `MKV_WEB_INDEX_URL=/remote-index.json`** —— 它会被 MSYS 转成
 > `C:/Program Files/.../PortableGit/remote-index.json` 污染编译期常量。
-> 三种正确写法（任选其一）：
+>
+> **机理（2026-11-09 实测，务必理解）**：路径转换发生在**启动原生 Windows 程序
+> （也就是 `dx`）的那一刻**，MSYS 会把环境变量里形如 `/foo` 的值转成 Windows 绝对路径。
+> 所以 **bash 脚本内部读到的值仍然是干净的** —— 在 shell 里 `echo $MKV_WEB_INDEX_URL`
+> **查不出污染**，被污染的是**传进 dx 进程的那份**（也就是编译进 wasm 的常量）。
+> 判据很简单：**值以 `/` 开头 = 会被转换**。
+>
+> 四种正确写法（任选其一）：
 > ```bash
-> MSYS_NO_PATHCONV=1 MKV_WEB_INDEX_URL=/remote-index.json scripts/publish-web.sh   # ① 关闭路径转换
-> MKV_WEB_INDEX_URL="https://your.site/mkv-index.json" scripts/publish-web.sh     # ② 用完整 URL
-> MKV_WEB_INDEX_URL=./mkv-index.json scripts/publish-web.sh                        # ③ 用 ./ 相对路径
+> MSYS_NO_PATHCONV=1 MKV_WEB_INDEX_URL=/remote-index.json scripts/publish-web.sh        # ① 全局关闭转换
+> MSYS2_ENV_CONV_EXCL=MKV_WEB_INDEX_URL MKV_WEB_INDEX_URL=/remote-index.json \
+>   scripts/publish-web.sh                                                              # ② 只排除本变量
+> MKV_WEB_INDEX_URL="https://your.site/mkv-index.json" scripts/publish-web.sh          # ③ 用完整 URL
+> MKV_WEB_INDEX_URL=./mkv-index.json scripts/publish-web.sh                             # ④ 用 ./ 相对路径
 > ```
-> 自查：`bash -c 'echo $MKV_WEB_INDEX_URL'` —— 若输出里出现 `C:/Program Files/...` 即已被污染。
+> `scripts/publish-web.sh` 已内置 **fail fast 自检**：在 MSYS 环境下若值以 `/` 开头
+> 且未关闭转换，脚本会在**任何构建之前**直接报错退出，不再让坏常量流入产物。
 >
 > **这个坑的表现极具误导性**：常量被污染后浏览器会去请求一个 `file://` 本地路径，
 > 页面**一切正常**（内嵌产物照常渲染），但状态栏永远不会出现「远端产物」——

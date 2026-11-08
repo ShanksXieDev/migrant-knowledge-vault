@@ -13,10 +13,13 @@
  *     dx build --release --web --package mkv-web
  *
  * ⚠️ **Git Bash 下必须加 `MSYS_NO_PATHCONV=1`**（或改用完整 URL / `./` 相对路径）：
- *    MSYS 会把 `/remote-index.json` 转成 `C:/Program Files/.../PortableGit/remote-index.json`，
+ *    MSYS 会在**启动 dx 那一刻**把环境变量里形如 `/foo` 的值转成 Windows 绝对路径，
  *    编译期常量被污染后浏览器会去请求一个 `file://` 本地路径，
  *    热替换**永不生效**，且现象是「页面正常但状态栏永远没有『远端产物』」——
- *    容易被误判成产品缺陷。用 `bash -c 'echo $MKV_WEB_INDEX_URL'` 可自查是否被转换。
+ *    容易被误判成产品缺陷。
+ *    判据是「**值是否以 `/` 开头**」（不是「值看起来是否已变成 Windows 路径」——
+ *    bash 内部读到的值始终是干净的，在 shell 里 echo 是查不出污染的）。
+ *    `scripts/publish-web.sh` 已内置 fail fast 自检。
  *
  * 本脚本用 Playwright 的路由拦截伪造远端响应，无需真的部署索引服务：
  *   1. 远端返回有效产物 → 应热替换（文档数与知识库名改变、状态栏标「远端产物」）

@@ -34,6 +34,48 @@ PY="$(command -v python3 || command -v python)"
 echo "[mkv] 知识库：$VAULT"
 echo "[mkv] 输出目录：$DIST"
 
+# --- MSYS 污染自检（必须在任何构建之前）---------------------------------
+# 机理（2026-11-09 实测）：Git Bash 的路径转换发生在**启动原生 Windows 程序
+# （如 dx）的那一刻**——它会把环境变量里形如 /foo 的值转成 Windows 绝对路径。
+# 因此：
+#   · bash 脚本内部读到的值仍是干净的（`/remote-index.json`），
+#     **在脚本里检查「值是否已被污染」是查不出来的**；
+#   · 真正被污染的是**传进 dx 进程的环境变量**，也就是编译进 wasm 的常量。
+# 被污染的常量会让浏览器去请求一个 file:// 本地路径 —— 页面一切正常，
+# 但远端热替换**永不生效**，属于最难排查的静默失效，因此这里直接 fail fast。
+#
+# 仅在 MSYS 环境下检查：Linux CI 里 `/remote-index.json` 是合法的站点根相对路径。
+is_msys=0
+case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*) is_msys=1 ;;
+esac
+if [ "$is_msys" = "1" ] && [ -n "${MKV_WEB_INDEX_URL:-}" ]; then
+    case "$MKV_WEB_INDEX_URL" in
+        /*)
+            # 以 / 开头 = POSIX 绝对路径，传给 dx 时会被 MSYS 转换。
+            # 除非用户已显式关闭转换（MSYS_NO_PATHCONV=1 或按变量名排除）。
+            skip_conv=0
+            [ "${MSYS_NO_PATHCONV:-}" = "1" ] && skip_conv=1
+            case ";${MSYS2_ENV_CONV_EXCL:-};" in
+                *";MKV_WEB_INDEX_URL;"*) skip_conv=1 ;;
+            esac
+            if [ "$skip_conv" = "0" ]; then
+                echo "[mkv] 错误：MKV_WEB_INDEX_URL 以 '/' 开头，传给 dx 时会被 MSYS 转成" >&2
+                echo "[mkv]        Windows 绝对路径，从而污染编译期常量：" >&2
+                echo "[mkv]        当前值 = $MKV_WEB_INDEX_URL" >&2
+                echo "[mkv]        后果：浏览器会去请求 file:// 本地路径，页面一切正常，" >&2
+                echo "[mkv]        但远端索引热替换**永不生效**（静默失效，最难排查）。" >&2
+                echo "[mkv]        Git Bash 下请改用以下任一写法：" >&2
+                echo "[mkv]          MSYS_NO_PATHCONV=1 MKV_WEB_INDEX_URL=/remote-index.json" >&2
+                echo "[mkv]          MSYS2_ENV_CONV_EXCL=MKV_WEB_INDEX_URL MKV_WEB_INDEX_URL=/remote-index.json" >&2
+                echo "[mkv]          MKV_WEB_INDEX_URL=\"https://your.site/mkv-index.json\"" >&2
+                echo "[mkv]          MKV_WEB_INDEX_URL=./mkv-index.json" >&2
+                exit 1
+            fi
+            ;;
+    esac
+fi
+
 # --- 1. 导出预构建索引产物（会顺带刷新库内索引）---
 echo "[mkv] 1/4 导出预构建索引…"
 if [ -f "$DICT" ]; then
