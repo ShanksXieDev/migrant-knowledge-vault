@@ -219,8 +219,42 @@ fn real_notify_watcher_updates_index_end_to_end() {
         )
     });
 
-    // 等待监听器完成注册
-    std::thread::sleep(Duration::from_millis(400));
+    // 等待监听器**真正就绪**——不能用固定 sleep。
+    //
+    // 固定 sleep 只是一次竞态假设：若监听线程在 sleep 结束时还没建立好
+    // inotify watch，紧接着的写入就发生在 watch 建立之前，
+    // 而 inotify **不追溯**——那次写入永远不会产生事件。
+    // 症状因此不是「慢」，而是「10 秒内收不到任何批次」
+    // （run #28 `42531894566` 在 Linux runner 上实测如此，
+    //  本地 Windows 与 run #27 均正常）。
+    //
+    // 因此改用「写探针 → 等报告」确认就绪：探针事件若在 watch 建立前丢失，
+    // 就再来一次，直到收到第一个批次。探针文件不参与后续断言，
+    // 且探针耗时不计入下面的端到端计时。
+    let ready_deadline = Instant::now() + Duration::from_secs(60);
+    let mut probe_seq: u32 = 0;
+    loop {
+        probe_seq += 1;
+        fs::write(
+            dir.join("probe.md"),
+            format!("# 探针\n\nPROBESE{probe_seq}。"),
+        )
+        .unwrap();
+        match rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(_) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                assert!(
+                    Instant::now() < ready_deadline,
+                    "监听器 60 秒内仍未就绪：反复写入探针文件都收不到事件批次"
+                );
+                eprintln!(
+                    "[watcher-e2e] 探针第 {probe_seq} 次未收到事件（监听器尚未就绪），重试"
+                );
+            }
+            Err(e) => panic!("等待探针批次失败：{e:?}"),
+        }
+    }
+
     let written_at = Instant::now();
     fs::write(dir.join("b.md"), "# 新增\n\nBETAUNIQUE 内容。").unwrap();
 
