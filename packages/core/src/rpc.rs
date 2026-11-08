@@ -26,10 +26,27 @@
 //! 之所以不用 `set_nonblocking` + 轮询：那是 **Unix 独有**的 API，
 //! Windows 上没有，写进 `#[cfg(unix)]` 就等于让 Windows 继续裸奔。
 //!
+//! # 读线程的生命周期
+//!
+//! stdout 是**一次性流**：一个进程只有一条响应序列，不能为每次调用各起一条读线程
+//! （两条线程会抢同一份字节，响应从此错位）。因此这里的做法是：
+//!
+//! - 每次调用**只读一行**，读线程读完后把 `BufReader` **原样交还**给客户端
+//!   （连同它内部可能已缓冲的字节），下一次调用接着用——等于读线程「随客户端存活」；
+//! - 客户端被终止时（`shutdown()`），读线程阻塞在 `read_line` 上，
+//!   上游进程一死，管道 EOF 让 `read_line` 返回 0，线程**自然结束**，不会泄漏。
+//!
+//! # 超时后为什么整个客户端作废
+//!
 //! 超时后**整个客户端作废**：进程被终止、`BufReader` 连同其中可能已读了一半的
 //! 字节一起丢弃。下次调用会重新 spawn 一个干净的进程。
 //! 这一步是必需的——若只是丢弃「本次响应」而留着缓冲，
 //! 下一次读到的会是**上一条请求的半截响应**，请求与响应从此错位。
+//!
+//! 「作废」的判定不需要额外的布尔标志：`self.stdout` 被 `take()` 走后就是 `None`，
+//! 而 `ensure_started()` 的复用条件是「stdin 与 stdout **都在**」——
+//! stdout 为 `None` 时复用条件自然不成立，下次调用必定重新 spawn。
+//! 这也是为什么超时时**绝不能**把读取器放回 `self.stdout`。
 //!
 //! # 为什么不用 LSP 的 Content-Length 分帧
 //!
@@ -185,6 +202,7 @@ impl JsonRpcClient {
             let _ = tx.send((res, reader));
         });
 
+        let started = std::time::Instant::now();
         match rx.recv_timeout(timeout) {
             Ok((Ok((n, line)), reader)) => {
                 if n == 0 {
@@ -206,8 +224,13 @@ impl JsonRpcClient {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 // 超时：进程与缓冲一并作废（见模块文档「超时」一节）。
                 self.shutdown();
+                // 错误文案同时给出**配置时限**与**实测等待时长**：
+                // 前者是契约，后者让排查者能分清「等满时限仍未响应」
+                // 与其它失败原因。
+                let waited = started.elapsed().as_millis();
                 Err(Error::Config(format!(
-                    "调用上游进程超时（{timeout_ms} 毫秒）：上游未在时限内响应，已终止该进程并将在下次调用时重启"
+                    "调用上游进程超时（{timeout_ms} 毫秒）：上游未在时限内响应，\
+                     已等待 {waited} 毫秒，已终止该进程并将在下次调用时重启"
                 )))
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {

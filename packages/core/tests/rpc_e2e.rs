@@ -37,11 +37,25 @@ use serde_json::{json, Value};
 
 /// 服务器模式参数前缀。
 const SERVER_FLAG: &str = "--server=";
+/// 「一次性退出」模式的标记文件参数前缀。
+///
+/// 上游的 stdout 是一次性流，**读线程只能随 client 生命周期存在一次**，
+/// 因此客户端在进程退出后必须**重新 spawn** 才能继续对话。
+/// 而「重新 spawn」这件事在测试里需要一个跨进程的判据，
+/// 否则每次 spawn 出来的上游行为都一样，无法区分「第一次」与「第二次」。
+/// 标记文件就是那个判据：第一次被 spawn 时不存在 → 写文件并退出；
+/// 第二次被 spawn 时已存在 → 正常服务。
+const MARKER_FLAG: &str = "--marker=";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if let Some(arg) = args.iter().find(|a| a.starts_with(SERVER_FLAG)) {
-        server_main(&arg[SERVER_FLAG.len()..]);
+        let mode = &arg[SERVER_FLAG.len()..];
+        let marker = args
+            .iter()
+            .find(|a| a.starts_with(MARKER_FLAG))
+            .map(|a| a[MARKER_FLAG.len()..].to_string());
+        server_main(mode, marker.as_deref());
         return;
     }
     run_tests();
@@ -55,11 +69,25 @@ fn main() {
 /// - `echo`：把 `method` 原样放进 `result.echo`；
 /// - `error`：返回 JSON-RPC 错误；
 /// - `exit`：立刻退出（不读 stdin）；
+/// - `exit_once`：**第一次**被 spawn 时立刻退出，之后被 spawn 则正常服务
+///   （用于验证「进程退出后客户端能自愈重启」）；
 /// - `hang`：读到请求但**不回应**（用于超时测试）；
 /// - `mini`：完整的迷你上游，实现 open / view / apply / serialize / version。
-fn server_main(mode: &str) {
+fn server_main(mode: &str, marker: Option<&str>) {
     if mode == "exit" {
         std::process::exit(0);
+    }
+    if mode == "exit_once" {
+        // 标记文件不存在 → 这是第一次被 spawn：写下标记并立刻退出，
+        // 模拟「上游进程崩溃」。客户端应识别出「进程已退出」，
+        // 并在下次调用时**重新 spawn**（此时标记已存在 → 正常服务）。
+        let Some(path) = marker else {
+            std::process::exit(2);
+        };
+        if !std::path::Path::new(path).exists() {
+            let _ = std::fs::write(path, b"spawned");
+            std::process::exit(0);
+        }
     }
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
@@ -173,6 +201,7 @@ fn run_tests() {
         ("detects_process_exit", case_process_exit),
         ("times_out_when_upstream_hangs", case_timeout),
         ("client_recovers_after_timeout", case_recover_after_timeout),
+        ("respawns_after_upstream_exit", case_respawn_after_exit),
         ("health_reports_upstream_version", case_health),
         ("full_open_view_apply_serialize_chain", case_full_chain),
     ];
@@ -202,10 +231,17 @@ fn run_tests() {
 
 /// 造一个指向**本测试二进制自身**的客户端。
 fn client(mode: &str, timeout_ms: u64) -> JsonRpcClient {
+    client_with_args(mode, timeout_ms, Vec::new())
+}
+
+/// 同上，但可追加额外参数（用于「一次性退出」模式的标记文件）。
+fn client_with_args(mode: &str, timeout_ms: u64, extra: Vec<String>) -> JsonRpcClient {
     let exe = std::env::current_exe().expect("能取到当前测试二进制路径");
+    let mut args = vec![format!("{SERVER_FLAG}{mode}")];
+    args.extend(extra);
     JsonRpcClient::new(ExternalConfig {
         command: exe.to_string_lossy().to_string(),
-        args: vec![format!("{SERVER_FLAG}{mode}")],
+        args,
         timeout_ms,
     })
 }
@@ -288,6 +324,47 @@ fn case_recover_after_timeout() {
         second.to_string().contains("超时") || second.to_string().contains("退出"),
         "第二次调用的错误应可解释，实际：{second}"
     );
+}
+
+/// 上游进程意外退出后，客户端必须**自愈**：下次调用重新 spawn 并成功。
+///
+/// 这一条盯的是 `ensure_started()` 的重启分支——stdout 是一次性流，
+/// 进程没了就再也读不到东西，必须丢掉旧状态、重新拉起上游。
+fn case_respawn_after_exit() {
+    let marker = std::env::temp_dir().join(format!(
+        "mkv_rpc_e2e_respawn_{}_{}.marker",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    ));
+    let _ = std::fs::remove_file(&marker);
+
+    let mut c = client_with_args(
+        "exit_once",
+        5_000,
+        vec![format!(
+            "{MARKER_FLAG}{}",
+            marker.to_string_lossy()
+        )],
+    );
+
+    // 第一次调用：上游被拉起后立刻退出 → 必须报错。
+    let first = c.call(methods::OPEN, json!({})).expect_err("首次应识别进程退出");
+    assert!(
+        first.to_string().contains("退出") || first.to_string().contains("失败"),
+        "首次调用应报「进程已退出」，实际：{first}"
+    );
+
+    // 第二次调用：客户端应重新 spawn 上游（此时标记已存在 → 上游正常服务），
+    // 并且**成功**返回结果。
+    let second = c
+        .call(methods::OPEN, json!({}))
+        .expect("进程退出后再次调用应重新 spawn 并成功");
+    assert_eq!(second["echo"], json!(methods::OPEN));
+
+    let _ = std::fs::remove_file(&marker);
 }
 
 fn case_health() {
