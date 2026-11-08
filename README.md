@@ -459,7 +459,7 @@ HTTP 500 回落、空索引回落、顶栏知识库名同步。报告：`docs/br
 | 依赖 | wasm32 依赖树零 `tantivy / jieba / zstd / rusqlite / git2 / notify / cc` |
 | 构建 | `scripts/publish-web.sh` + 产物清单校验 + **wasm < 800KB 体积门禁** |
 | 浏览器 | `dist/` 起静态服务 → Playwright Chromium 跑 25 项交互回归 |
-| 发布 | main 分支自动 `actions/deploy-pages`（run #7 已实测 success）；PR 只验证不发布 |
+| 发布 | main 分支自动 `actions/deploy-pages`（run #7 / #8 / #9 连续实测 success）；PR 只验证不发布 |
 
 CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—— Windows MSVC 的
 `link.exe` 链接 proc-macro DLL 会挂起，源码编译不可靠。
@@ -499,6 +499,17 @@ warning、不影响 `verify` 门禁；配置后 `actions/deploy-pages@v4` 自动
 
 > 从「push main」到「站点可访问」全自动，无人工上传步骤。
 > 后续每次 main 推送都会重跑门禁并重新发布；PR 只验证不发布。
+
+**A/B 上线复核（run #9，提交 `9ba2653`）**：wasm 体积优化 + 精确定位 + 图谱推送后，
+**run #9 `42450219477` Success**（约 3 分钟）—— verify 全部必需步骤通过，新增的
+「产物清单 + wasm < 800KB 体积门禁」与「Playwright Chromium 25 项交互回归」均为 success，
+`actions/deploy-pages@v4` 再次 success。线上 `deploy-info.json` 的 `generated_at`
+由 `04:33:14Z` 刷新为 `05:20:01Z`，`wasm_optimization` 记录
+`1,192,134B → 667,487B`（CI/Linux 产物，与本地 Windows 的 667,161B 有平台差异），
+`mkv-index.json` 14,174B（含 `segments`），首页 / 索引 / 元数据 / `.nojekyll` 全部 HTTP 200。
+对**线上 URL** 用系统 Edge 跑完整 **25/25 全通过**，0 console error、0 page error，4.88s，
+报告与截图：`docs/browser-validation/pages-live-ab/`。
+至此 #6 / #7 / #8 / #9 连续 success，功能迭代后自动发布闭环依然稳定。
 
 ### 12.7 wasm 体积优化（wasm-opt）
 
@@ -611,7 +622,8 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 > 2026-11-08：技术债务已清理，P0 文件监听、P1 静态发布（方案 A）+ CI 门禁、
 > Desktop UI 自动刷新与 F-08 外部唤起均已落地。代码已推送到 GitHub，
 > **CI 真实首跑已核对**并修掉 dx 校验和、wasm strip 等 Linux 专属问题（复盘见 §12.5）。
-> **Pages 自动发布已闭环**：run #7 的 `deploy-pages` 实测 success，
-> 线上站点 <https://shanksxiedev.github.io/migrant-knowledge-vault/> 18/18 项回归全绿（§12.6）。
-> **A + B 均已完成**（§12.7 / §13.4 / §13.5）：wasm 1,245,191B → 667,161B（-46.4%）；
-> 检索结果精确定位与 F-10 双链图谱落地；**127 项测试 + 25/25 项浏览器回归全绿**。
+> **Pages 自动发布已闭环**：run #7 的 `deploy-pages` 实测 success；run #9 复核 A/B 上线后
+> 站点 <https://shanksxiedev.github.io/migrant-knowledge-vault/> **25/25 项回归全绿**（§12.6）。
+> **A + B 均已完成**（§12.7 / §13.4 / §13.5）：wasm 本地 1,245,191B → 667,161B（-46.4%）、
+> CI 1,192,134B → 667,487B；检索结果精确定位与 F-10 双链图谱落地；
+> **127 项测试 + 本地 / 线上各 25/25 项浏览器回归全绿**。
