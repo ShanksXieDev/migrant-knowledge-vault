@@ -1,0 +1,728 @@
+//! 知识库门面：把存储、索引、元数据、Git、编辑器编排成统一 API。
+//!
+//! 见技术方案设计 §6 核心数据流：
+//! 扫描 → 解析 → 写索引 → 检索 / 双链 / 编辑 / 版本。
+
+use crate::error::{Error, Result};
+use crate::format::Format;
+use crate::git::{CommitInfo, GitRepo};
+use crate::index::{IndexDocument, SearchIndex, TantivyIndex};
+use crate::meta::MetaStore;
+use crate::types::{DocumentRecord, LinkRecord, SearchHit};
+use crate::parse::{self, ExtractedLink};
+use crate::scan::{ScanResult, ScannedDoc, scan};
+use crate::storage::{FsStorage, Storage};
+use std::path::{Path, PathBuf};
+
+/// 索引构建进度。
+#[derive(Debug, Clone, Default)]
+pub struct IndexProgress {
+    pub total: usize,
+    pub done: usize,
+    pub current: String,
+}
+
+/// 索引构建结果。
+#[derive(Debug, Clone)]
+pub struct IndexReport {
+    pub scanned: usize,
+    pub indexed: usize,
+    pub skipped: usize,
+    pub links_found: usize,
+    pub elapsed_ms: u128,
+}
+
+/// 知识库。
+pub struct Vault {
+    storage: Box<dyn Storage>,
+    meta: MetaStore,
+    index: TantivyIndex,
+    git: Option<GitRepo>,
+    root: Option<PathBuf>,
+    /// 索引目录独占锁（决策：文件锁）。持有至 Vault 析构。
+    _lock: FileLock,
+}
+
+impl Vault {
+    /// 打开（并按需创建）一个知识库。
+    ///
+    /// - `init_git` 为 true 时初始化 Git 仓库并写入 `.gitignore`。
+    /// - 索引目录固定为 `<root>/.kbindex/`。
+    pub fn open(root: impl AsRef<Path>, init_git: bool) -> Result<Self> {
+        let root = root.as_ref().to_path_buf();
+        std::fs::create_dir_all(&root).map_err(|e| Error::io(root.clone(), e))?;
+
+        let kbindex = root.join(crate::KBINDEX_DIR);
+        std::fs::create_dir_all(&kbindex).map_err(|e| Error::io(kbindex.clone(), e))?;
+
+        // 索引目录锁：防止多端同时写入损坏索引（决策：文件锁）
+        let lock = acquire_lock(&kbindex)?;
+
+        let storage = Box::new(FsStorage::new(&root));
+        let meta = MetaStore::open(&kbindex.join("meta.db"))?;
+        let index = TantivyIndex::open(&kbindex)?;
+
+        let git = if init_git {
+            let repo = GitRepo::init_or_open(&root)?;
+            repo.ensure_gitignore()?;
+            Some(repo)
+        } else {
+            GitRepo::open(&root).ok()
+        };
+
+        Ok(Self {
+            storage,
+            meta,
+            index,
+            git,
+            root: Some(root),
+            _lock: lock,
+        })
+    }
+
+    /// 知识库根目录。
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
+    /// 索引目录路径。
+    pub fn kbindex_dir(&self) -> Option<PathBuf> {
+        self.root.as_ref().map(|r| r.join(crate::KBINDEX_DIR))
+    }
+
+    /// 扫描知识库。
+    pub fn scan(&self) -> Result<ScanResult> {
+        scan(self.storage.as_ref())
+    }
+
+    /// 全量重建索引与元数据。
+    pub fn reindex(
+        &mut self,
+        mut progress: Option<&mut dyn FnMut(IndexProgress)>,
+    ) -> Result<IndexReport> {
+        let started = std::time::Instant::now();
+        let scan_result = self.scan()?;
+
+        // 全量重建必须先清空全文索引：否则磁盘上已删除 / 改名的文档
+        // 会留下幽灵条目（`upsert` 只按 path 覆盖自己），检索仍命中旧路径。
+        // 放在 scan 成功之后，避免扫描失败时把索引清成空库。
+        self.index.clear()?;
+        self.index.commit()?;
+
+        // 记录文档表与链接
+        let mut records: Vec<DocumentRecord> = Vec::new();
+        // 每个文档解析出的原始链接（第二阶段再解析目标路径）
+        let mut pending: Vec<(String, Vec<ExtractedLink>, String)> = Vec::new();
+        let mut link_count = 0usize;
+
+        let total = scan_result.docs.len();
+        for (i, doc) in scan_result.docs.iter().enumerate() {
+            if let Some(cb) = progress.as_mut() {
+                cb(IndexProgress {
+                    total,
+                    done: i,
+                    current: doc.path.clone(),
+                });
+            }
+
+            let parsed = parse::parse_document(self.storage.as_ref(), &doc.path, doc.format)?;
+            let content_hash = hash_text(&parsed.text);
+
+            records.push(DocumentRecord {
+                path: doc.path.clone(),
+                title: doc.title().to_string(),
+                format: format!("{:?}", doc.format),
+                size: doc.size,
+                modified_at: doc.modified_at,
+                content_hash,
+            });
+
+            // 写入全文索引
+            self.index.upsert(&IndexDocument {
+                path: doc.path.clone(),
+                title: doc.title().to_string(),
+                content: parsed.text.clone(),
+                format: format!("{:?}", doc.format),
+            })?;
+
+            link_count += parsed.links.len();
+            pending.push((
+                doc.path.clone(),
+                parsed.links,
+                doc.format.link_granularity().to_string(),
+            ));
+        }
+
+        self.index.commit()?;
+        self.meta.replace_documents(&records)?;
+
+        // 第二阶段：解析链接目标并写入 links 表。
+        // 必须在 documents 表落库之后进行 —— 链接目标要靠文档名/标题反查，
+        // 否则 to_path 解析为空，双链无从建立。
+        for (from_path, links, granularity) in &pending {
+            let rows: Vec<LinkRecord> = links
+                .iter()
+                .map(|link| LinkRecord {
+                    from_path: from_path.clone(),
+                    to_path: self.resolve_link_target(&link.target, &records),
+                    target: link.target.clone(),
+                    granularity: granularity.clone(),
+                })
+                .collect();
+            self.meta.replace_links(from_path, &rows)?;
+        }
+
+        self.meta.set_state("schema_version", &crate::SCHEMA_VERSION.to_string())?;
+        self.meta.set_state("last_indexed_at", &crate::meta::now_secs().to_string())?;
+        // 记录本次索引所依据的词典版本，便于判断索引是否过期
+        self.meta
+            .set_state("domain_dict_hash", &self.index.domain_dict_hash())?;
+
+        if let Some(cb) = progress.as_mut() {
+            cb(IndexProgress {
+                total,
+                done: total,
+                current: String::new(),
+            });
+        }
+
+        Ok(IndexReport {
+            scanned: scan_result.docs.len(),
+            indexed: records.len(),
+            skipped: scan_result.skipped,
+            links_found: link_count,
+            elapsed_ms: started.elapsed().as_millis(),
+        })
+    }
+
+    /// 增量更新单个文档（编辑保存后调用）。
+    pub fn update_document(&mut self, rel_path: &str) -> Result<()> {
+        let Some(format) = Format::from_path(Path::new(rel_path)) else {
+            return Err(Error::UnsupportedFormat(rel_path.to_string()));
+        };
+
+        let parsed = parse::parse_document(self.storage.as_ref(), rel_path, format)?;
+        let title = Path::new(rel_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| rel_path.to_string());
+
+        self.index.upsert(&IndexDocument {
+            path: rel_path.to_string(),
+            title: title.clone(),
+            content: parsed.text.clone(),
+            format: format!("{format:?}"),
+        })?;
+        self.index.commit()?;
+
+        let size = self.storage.file_size(rel_path)?.unwrap_or(0);
+        let modified_at = self.storage.modified_at(rel_path)?.unwrap_or(0);
+        self.meta.upsert_document(&DocumentRecord {
+            path: rel_path.to_string(),
+            title,
+            format: format!("{format:?}"),
+            size,
+            modified_at,
+            content_hash: hash_text(&parsed.text),
+        })?;
+
+        let mut links: Vec<LinkRecord> = Vec::new();
+        let known = self.meta.list_documents()?;
+        for link in &parsed.links {
+            links.push(LinkRecord {
+                from_path: rel_path.to_string(),
+                to_path: self.resolve_link_target(&link.target, &known),
+                target: link.target.clone(),
+                granularity: format.link_granularity().to_string(),
+            });
+        }
+        self.meta.replace_links(rel_path, &links)?;
+        Ok(())
+    }
+
+    /// 打开文档进行内置编辑（GridCraft / DeckCraft / WordCraft）。
+    pub fn open_editor(&self, rel_path: &str) -> Result<crate::editor::EditSession> {
+        let Some(format) = Format::from_path(Path::new(rel_path)) else {
+            return Err(Error::UnsupportedFormat(rel_path.to_string()));
+        };
+        let router = crate::editor::EditorRouter::new();
+        match router.route(
+            self.storage.as_ref(),
+            rel_path,
+            format,
+            crate::editor::EditMode::Builtin,
+        )? {
+            crate::editor::EditorTarget::Builtin { session, .. } => Ok(session),
+            crate::editor::EditorTarget::External { .. } => {
+                Err(Error::Config(format!("{} 无内置编辑器", format.label())))
+            }
+        }
+    }
+
+    /// 保存内置编辑结果：写回原生文件 → 增量重建该文档的索引与双链。
+    ///
+    /// 返回是否成功（写盘成功但索引更新失败时返回错误并说明阶段）。
+    pub fn save_editor(&mut self, session: &crate::editor::EditSession) -> Result<()> {
+        // 1) 写回原生文件（守"文件优先"：始终读写原生格式）
+        session.save(self.storage.as_ref())?;
+
+        // 2) 增量重建该文档的索引与双链（PRD 一致性要求：1s 内更新）
+        self.update_document(&session.rel_path)?;
+        Ok(())
+    }
+
+    /// 读取文档**抽取后的正文**（与全文索引所用内容一致）。
+    ///
+    /// 与 [`Vault::read_document`]（原始字节）的区别：
+    /// 本方法对二进制格式（Excel / Word / PPT）做文本抽取，
+    /// 因此预构建索引的倒排表与运行时索引内容一致。
+    pub fn read_extracted_text(&self, rel_path: &str) -> Result<String> {
+        let Some(format) = Format::from_path(Path::new(rel_path)) else {
+            return Err(Error::UnsupportedFormat(rel_path.to_string()));
+        };
+        parse::extract_text(self.storage.as_ref(), rel_path, format)
+            .map_err(|e| Error::Parse {
+                path: PathBuf::from(rel_path),
+                message: e.to_string(),
+            })
+    }
+
+    /// 从索引中删除文档。
+    pub fn remove_document(&mut self, rel_path: &str) -> Result<()> {
+        self.index.delete(rel_path)?;
+        self.index.commit()?;
+        self.meta.delete_document(rel_path)?;
+        Ok(())
+    }
+
+    /// 重新解析全库文档的链接目标，修复双链悬空。
+    ///
+    /// `update_document` 只更新**该文档自己的出链**；但以下场景会影响别人的链接：
+    /// - A.md 写了 `[[台账]]`，当时台账.xlsx 还不存在 → `to_path` 为空；
+    ///   后来新建台账.xlsx，必须重算 A.md 的出链才能建立反链；
+    /// - 文档改名 / 删除后，原先指向它的 `to_path` 变成悬空路径。
+    ///
+    /// 因此文件监听在「新建 / 删除 / 改名」批次结束后调用本方法；
+    /// 纯内容修改走 `update_document` 即可，不必付这份开销。
+    /// 返回重算后的链接总数。
+    pub fn relink_all(&mut self) -> Result<usize> {
+        let docs = self.meta.list_documents()?;
+        let mut total = 0usize;
+
+        for doc in &docs {
+            let Some(format) = Format::from_path(Path::new(&doc.path)) else {
+                continue;
+            };
+            let parsed = match parse::parse_document(self.storage.as_ref(), &doc.path, format) {
+                Ok(p) => p,
+                Err(_) => {
+                    // 文档已从磁盘消失但元数据尚未清理：清空其出链，
+                    // 避免悬空链接污染反链面板。
+                    self.meta.replace_links(&doc.path, &[])?;
+                    continue;
+                }
+            };
+
+            let rows: Vec<LinkRecord> = parsed
+                .links
+                .iter()
+                .map(|link| LinkRecord {
+                    from_path: doc.path.clone(),
+                    to_path: self.resolve_link_target(&link.target, &docs),
+                    target: link.target.clone(),
+                    granularity: format.link_granularity().to_string(),
+                })
+                .collect();
+            total += rows.len();
+            self.meta.replace_links(&doc.path, &rows)?;
+        }
+        Ok(total)
+    }
+
+    /// 全文检索。
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        self.index.search(query, limit)
+    }
+
+    /// 文档反链（谁引用了我）。
+    pub fn backlinks(&self, rel_path: &str) -> Result<Vec<LinkRecord>> {
+        self.meta.backlinks(rel_path)
+    }
+
+    /// 文档出链（我引用了谁）。
+    pub fn outgoing_links(&self, rel_path: &str) -> Result<Vec<LinkRecord>> {
+        self.meta.outgoing_links(rel_path)
+    }
+
+    /// 读取文档原始内容。
+    pub fn read_document(&self, rel_path: &str) -> Result<String> {
+        let bytes = self.storage.read(rel_path)?;
+        Ok(String::from_utf8_lossy(&bytes).to_string())
+    }
+
+    /// 列出全部文档记录。
+    pub fn documents(&self) -> Result<Vec<DocumentRecord>> {
+        self.meta.list_documents()
+    }
+
+    /// 文件是否仍存在于磁盘（文件监听用于把改名事件的旧路径翻转为删除）。
+    pub fn file_exists(&self, rel_path: &str) -> bool {
+        self.storage.exists(rel_path)
+    }
+
+    /// 索引中文本数量。
+    pub fn indexed_count(&self) -> Result<u64> {
+        self.index.doc_count()
+    }
+
+    /// 提交一次 Git 版本。
+    pub fn commit(&self, message: &str, author: &str) -> Result<CommitInfo> {
+        let git = self.git.as_ref().ok_or_else(|| Error::Config("未启用 Git".into()))?;
+        git.commit(message, author)
+    }
+
+    /// Git 提交历史。
+    pub fn log(&self, limit: usize) -> Result<Vec<CommitInfo>> {
+        let git = self.git.as_ref().ok_or_else(|| Error::Config("未启用 Git".into()))?;
+        git.log(limit)
+    }
+
+    /// 回滚到指定提交。
+    pub fn rollback(&self, commit_id: &str) -> Result<()> {
+        let git = self.git.as_ref().ok_or_else(|| Error::Config("未启用 Git".into()))?;
+        git.checkout_commit(commit_id)?;
+        Ok(())
+    }
+
+    /// 两个提交之间的差异摘要。
+    pub fn diff(&self, from: &str, to: &str) -> Result<Vec<String>> {
+        let git = self.git.as_ref().ok_or_else(|| Error::Config("未启用 Git".into()))?;
+        git.diff_summary(from, to)
+    }
+
+    /// 载入自定义领域词典并重建索引。
+    ///
+    /// 词典会持久化到 `.kbindex/dict.txt`，保证下次打开索引时
+    /// 索引与查询使用同一套分词规则（否则检索结果会失真）。
+    pub fn apply_domain_dict(&mut self, dict_text: &str) -> Result<usize> {
+        let added = self.index.apply_domain_dict(dict_text)?;
+        // 词典变化需重建索引才能生效
+        self.reindex(None)?;
+        // 记录本次索引所依据的词典版本
+        self.meta
+            .set_state("domain_dict_hash", &self.index.domain_dict_hash())?;
+        Ok(added)
+    }
+
+    /// 索引是否已过期。
+    ///
+    /// 领域词典在索引构建后被修改（手工编辑 `dict.txt`）时，
+    /// 现有索引的分词规则与词典不一致，需要重建。
+    pub fn is_index_stale(&self) -> bool {
+        let recorded = self.meta.get_state("domain_dict_hash").ok().flatten();
+        match recorded {
+            Some(h) => h != self.index.domain_dict_hash(),
+            None => !self.index.domain_dict_text().is_empty(),
+        }
+    }
+
+    /// 解析链接目标为实际文档路径。
+    ///
+    /// 匹配顺序（先精确后宽松）：
+    /// 1. 命中库内实际路径；
+    /// 2. 文件名完全一致（含扩展名，如 `ledger.xlsx`）；
+    /// 3. 去掉扩展名后主干一致（如 `[[台账]]` → `台账.xlsx`）；
+    /// 4. 文档标题一致。
+    ///
+    /// `docs` 为已知的文档清单，解析时以它为准（重建索引时传入本轮扫描结果）。
+    fn resolve_link_target(&self, target: &str, docs: &[DocumentRecord]) -> String {
+        let target = target.trim();
+        if target.is_empty() {
+            return String::new();
+        }
+        // 直接命中原路径
+        if self.storage.exists(target) {
+            return target.to_string();
+        }
+        if docs.iter().any(|d| d.path == target) {
+            return target.to_string();
+        }
+
+        // 按文件名匹配（忽略目录）
+        let file_name = target.rsplit('/').next().unwrap_or(target);
+        let file_name = file_name.rsplit('\\').next().unwrap_or(file_name);
+        if file_name.is_empty() {
+            return String::new();
+        }
+        for d in docs {
+            if file_name_of(&d.path) == file_name {
+                return d.path.clone();
+            }
+        }
+
+        // 去掉扩展名后按主干匹配（[[台账]] → 台账.xlsx）
+        let stem = strip_extension(file_name);
+        if !stem.is_empty() {
+            for d in docs {
+                if strip_extension(&file_name_of(&d.path)) == stem {
+                    return d.path.clone();
+                }
+            }
+        }
+
+        // 按标题匹配
+        for d in docs {
+            if d.title == target || d.title == file_name {
+                return d.path.clone();
+            }
+        }
+
+        String::new()
+    }
+
+}
+
+/// 取路径中的文件名部分。
+fn file_name_of(path: &str) -> &str {
+    let p = path.rsplit('/').next().unwrap_or(path);
+    p.rsplit('\\').next().unwrap_or(p)
+}
+
+/// 去掉扩展名（无扩展名时原样返回）。
+fn strip_extension(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !ext.is_empty() && !stem.is_empty() => stem,
+        _ => name,
+    }
+}
+
+/// 索引目录文件锁（决策：文件锁）。
+struct FileLock {
+    _file: std::fs::File,
+}
+
+/// 获取 `.kbindex/.lock` 独占锁。
+fn acquire_lock(kbindex: &Path) -> Result<FileLock> {
+    use fs2::FileExt;
+
+    let lock_path = kbindex.join(".lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| Error::io(lock_path.clone(), e))?;
+
+    file.try_lock_exclusive().map_err(|_| Error::Locked(lock_path.clone()))?;
+    Ok(FileLock { _file: file })
+}
+
+/// 计算文本哈希（用于变更检测）。
+fn hash_text(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// 便捷函数：从抽取到的链接列表构造未解析的 LinkRecord。
+pub fn unresolved_links(from_path: &str, links: &[ExtractedLink], granularity: &str) -> Vec<LinkRecord> {
+    links
+        .iter()
+        .map(|l| LinkRecord {
+            from_path: from_path.to_string(),
+            to_path: String::new(),
+            target: l.target.clone(),
+            granularity: granularity.to_string(),
+        })
+        .collect()
+}
+
+/// 扫描结果到索引文档的辅助转换。
+pub fn scanned_to_index_document(doc: &ScannedDoc, content: String) -> IndexDocument {
+    IndexDocument {
+        path: doc.path.clone(),
+        title: doc.title().to_string(),
+        content,
+        format: format!("{:?}", doc.format),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_vault(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mkv_{name}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn opens_creates_kbindex_and_git() {
+        let dir = temp_vault("open");
+        let vault = Vault::open(&dir, true).unwrap();
+        assert!(dir.join(".kbindex").exists());
+        assert!(dir.join(".kbindex/meta.db").exists());
+        assert!(dir.join(".git").exists());
+        assert!(dir.join(".gitignore").exists());
+        drop(vault);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn indexes_and_finds_documents() {
+        let dir = temp_vault("index");
+        fs::write(dir.join("a.md"), "# 模具分析\n\n这是关于 Moldflow 模流分析的笔记。").unwrap();
+        fs::write(dir.join("b.md"), "# 其他\n\n无关内容。").unwrap();
+
+        let mut vault = Vault::open(&dir, true).unwrap();
+        let report = vault.reindex(None).unwrap();
+        assert_eq!(report.indexed, 2);
+        assert_eq!(vault.indexed_count().unwrap(), 2);
+
+        let hits = vault.search("模流分析", 10).unwrap();
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].path, "a.md");
+
+        drop(vault);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extracts_and_resolves_backlinks() {
+        let dir = temp_vault("links");
+        fs::write(dir.join("target.md"), "# 目标").unwrap();
+        fs::write(dir.join("source.md"), "# 源\n\n见 [[target]]。").unwrap();
+
+        let mut vault = Vault::open(&dir, false).unwrap();
+        vault.reindex(None).unwrap();
+
+        let backlinks = vault.backlinks("target.md").unwrap();
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].from_path, "source.md");
+
+        drop(vault);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_commit_and_log() {
+        let dir = temp_vault("git");
+        fs::write(dir.join("a.md"), "# hello").unwrap();
+
+        let vault = Vault::open(&dir, true).unwrap();
+        let c = vault.commit("init", "tester").unwrap();
+        assert!(!c.id.is_empty());
+        let logs = vault.log(10).unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].message, "init");
+
+        drop(vault);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 回归：unborn branch（仓库尚无任何提交）必须能完成首次提交，
+    /// 且提交后 HEAD 可解析、`git log` 能读到历史。
+    ///
+    /// 旧实现用 `repo.commit(None, …)`，只创建 commit 对象不更新引用，
+    /// HEAD 仍指向不存在的 refs/heads/master，首次提交后 log 直接报错。
+    #[test]
+    fn git_commit_incrementally_appends_log() {
+        let dir = temp_vault("git2");
+        fs::write(dir.join("a.md"), "# hello").unwrap();
+
+        let vault = Vault::open(&dir, true).unwrap();
+        vault.commit("init", "tester").unwrap();
+        fs::write(dir.join("b.md"), "# world").unwrap();
+        vault.commit("second", "tester").unwrap();
+
+        let logs = vault.log(10).unwrap();
+        assert_eq!(logs.len(), 2, "logs = {logs:?}");
+        assert_eq!(logs[0].message, "second");
+        assert_eq!(logs[1].message, "init");
+
+        drop(vault);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 回归：领域词典必须持久化，并在重开索引时自动载入。
+    ///
+    /// 旧实现把词典只放在内存中的分词器实例里，新进程打开索引时退回默认分词器，
+    /// 查询与文档切词不一致，tantivy 短语查询直接零命中。
+    #[test]
+    fn domain_dict_survives_reopen() {
+        let dir = temp_vault("dict");
+        fs::write(dir.join("a.md"), "# 模流分析-入门\n\n模流分析入门 浇口位置。").unwrap();
+
+        let mut vault = Vault::open(&dir, false).unwrap();
+        vault.reindex(None).unwrap();
+        vault.apply_domain_dict("模流分析\n浇口\n").unwrap();
+        assert!(!vault.search("模流分析", 10).unwrap().is_empty());
+        assert!(
+            dir.join(".kbindex").join("dict.txt").exists(),
+            "领域词典应持久化到 .kbindex/dict.txt"
+        );
+        drop(vault);
+
+        // 重新打开（模拟新进程）
+        let vault2 = Vault::open(&dir, false).unwrap();
+        let hits = vault2.search("模流分析", 10).unwrap();
+        assert!(!hits.is_empty(), "重开索引后应能检索到文档");
+        assert_eq!(hits[0].path, "a.md");
+        assert!(!vault2.is_index_stale(), "刚重建的索引不应标记为过期");
+
+        drop(vault2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 回归：手工修改领域词典后，索引应被标记为过期。
+    #[test]
+    fn detects_stale_index_after_manual_dict_change() {
+        let dir = temp_vault("stale");
+        fs::write(dir.join("a.md"), "# 模流分析").unwrap();
+
+        let mut vault = Vault::open(&dir, false).unwrap();
+        vault.reindex(None).unwrap();
+        vault.apply_domain_dict("模流分析\n").unwrap();
+        assert!(!vault.is_index_stale());
+        drop(vault);
+
+        fs::write(dir.join(".kbindex").join("dict.txt"), "模流分析\n浇口\n").unwrap();
+        let vault2 = Vault::open(&dir, false).unwrap();
+        assert!(vault2.is_index_stale(), "词典变更后索引应标记为过期");
+
+        drop(vault2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 回归：链接目标解析必须发生在 documents 表落库之后。
+    ///
+    /// 旧实现边扫描边解析，而解析依赖 `meta.list_documents()`，
+    /// 此时表内还是空数据 → to_path 为空 → 反链为 0。
+    #[test]
+    fn resolves_links_by_title_and_file_name() {
+        let dir = temp_vault("resolve");
+        fs::write(dir.join("台账.md"), "# 台账\n\n模具台账记录。").unwrap();
+        fs::write(dir.join("来源.md"), "# 来源\n\n见 [[台账]] 与 @台账.md。").unwrap();
+
+        let mut vault = Vault::open(&dir, false).unwrap();
+        vault.reindex(None).unwrap();
+
+        let outgoing = vault.outgoing_links("来源.md").unwrap();
+        assert_eq!(outgoing.len(), 2, "outgoing = {outgoing:?}");
+        assert!(
+            outgoing.iter().all(|l| l.to_path == "台账.md"),
+            "outgoing = {outgoing:?}"
+        );
+
+        let backlinks = vault.backlinks("台账.md").unwrap();
+        assert_eq!(backlinks.len(), 2, "backlinks = {backlinks:?}");
+        assert_eq!(backlinks[0].from_path, "来源.md");
+
+        drop(vault);
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+

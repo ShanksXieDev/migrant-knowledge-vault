@@ -1,0 +1,59 @@
+{
+  "url": "http://127.0.0.1:8081",
+  "remotePath": "/remote-index.json",
+  "embeddedDocs": 8,
+  "remoteDocs": 2,
+  "passed": true,
+  "checks": [
+    {
+      "name": "R1 远端有效产物触发热替换",
+      "ok": true,
+      "detail": "status=\"2 个文档 · 远端产物（http://127.0.0.1:8081/remote-index.json）\" 文档=2（远端应 2）"
+    },
+    {
+      "name": "R2 热替换后知识库名同步更新",
+      "ok": true,
+      "detail": "root=\"remote-updated-vault\""
+    },
+    {
+      "name": "R3 远端 HTTP 500 静默回落内嵌产物",
+      "ok": true,
+      "detail": "status=\"8 个文档 · 构建期内嵌产物\" 文档=8/8"
+    },
+    {
+      "name": "R4 远端空索引视为无效并回落",
+      "ok": true,
+      "detail": "status=\"8 个文档 · 构建期内嵌产物\" 文档=8/8"
+    },
+    {
+      "name": "R5 三个用例均无未捕获 JS 异常",
+      "ok": true,
+      "detail": "0 个"
+    }
+  ],
+  "observations": {
+    "valid": {
+      "status": "2 个文档 · 远端产物（http://127.0.0.1:8081/remote-index.json）",
+      "root": "remote-updated-vault",
+      "docCount": 2,
+      "pageErrors": [],
+      "shot": "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\remote-valid.png"
+    },
+    "error": {
+      "status": "8 个文档 · 构建期内嵌产物",
+      "root": "sample-vault",
+      "docCount": 8,
+      "pageErrors": [],
+      "shot": "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\remote-error.png"
+    },
+    "empty": {
+      "status": "8 个文档 · 构建期内嵌产物",
+      "root": "sample-vault",
+      "docCount": 8,
+      "pageErrors": [],
+      "shot": "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\remote-empty.png"
+    }
+  },
+  "fatal": null,
+  "durationMs": 3989
+}

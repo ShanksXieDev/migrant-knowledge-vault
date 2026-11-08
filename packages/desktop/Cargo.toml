@@ -1,0 +1,13 @@
+[package]
+name = "mkv-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Migrant Knowledge Vault 桌面端（Dioxus desktop）"
+
+[dependencies]
+mkv-core = { workspace = true, features = ["native"] }
+mkv-ui.workspace = true
+dioxus = { workspace = true, features = ["desktop", "launch", "macro", "signals", "hooks", "html"] }

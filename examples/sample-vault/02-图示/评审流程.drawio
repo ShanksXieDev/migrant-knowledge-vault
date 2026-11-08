@@ -1,0 +1,17 @@
+<mxfile host="app.diagrams.net">
+<diagram name="评审流程" id="mkv-review-flow">
+<mxGraphModel dx="800" dy="600" grid="1" gridSize="10">
+<root>
+<mxCell id="0"/>
+<mxCell id="1" parent="0"/>
+<mxCell id="s1" value="方案提交" style="rounded=1" vertex="1" parent="1"/>
+<mxCell id="s2" value="模流仿真评审" style="rounded=1" vertex="1" parent="1"/>
+<mxCell id="s3" value="工艺参数基线" style="rounded=1" vertex="1" parent="1"/>
+<mxCell id="s4" value="评审通过" style="rounded=1" vertex="1" parent="1"/>
+<mxCell id="e1" value="提交" style="edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="s1" target="s2"/>
+<mxCell id="e2" value="对照基线" style="edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="s2" target="s3"/>
+<mxCell id="e3" value="通过" style="edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="s3" target="s4"/>
+</root>
+</mxGraphModel>
+</diagram>
+</mxfile>

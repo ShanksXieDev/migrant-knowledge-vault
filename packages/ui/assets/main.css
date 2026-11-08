@@ -1,0 +1,750 @@
+/* ==========================================================
+   Migrant Knowledge Vault —— 共享样式表
+   由 mkv-ui 通过 include_str! 编译期内联，三端通用。
+   约定：不使用 >、<、& 等字符，保证文本节点转义后依然有效。
+   ========================================================== */
+
+:root {
+  --mkv-bg: #f6f7f9;
+  --mkv-surface: #ffffff;
+  --mkv-surface-2: #f0f2f5;
+  --mkv-border: #dfe3e8;
+  --mkv-text: #1c2530;
+  --mkv-text-muted: #6b7785;
+  --mkv-accent: #2f6feb;
+  --mkv-accent-soft: #e8f0fe;
+  --mkv-danger: #d8453c;
+  --mkv-radius: 8px;
+  --mkv-gap: 12px;
+  --mkv-font: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --mkv-mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mkv-bg: #14171c;
+    --mkv-surface: #1c2027;
+    --mkv-surface-2: #232830;
+    --mkv-border: #313842;
+    --mkv-text: #e6eaf0;
+    --mkv-text-muted: #98a3b3;
+    --mkv-accent: #5b9bff;
+    --mkv-accent-soft: #1e2c46;
+    --mkv-danger: #ff6b62;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--mkv-font);
+  font-size: 14px;
+  color: var(--mkv-text);
+  background: var(--mkv-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+.mkv-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---------------- 顶栏 ---------------- */
+
+.mkv-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--mkv-gap);
+  height: 48px;
+  padding: 0 16px;
+  background: var(--mkv-surface);
+  border-bottom: 1px solid var(--mkv-border);
+  flex: 0 0 auto;
+}
+
+.mkv-topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.mkv-logo {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: #ffffff;
+  background: var(--mkv-accent);
+}
+
+.mkv-app-name {
+  font-size: 14px;
+}
+
+.mkv-topbar-root {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mkv-root-path {
+  font-family: var(--mkv-mono);
+  font-size: 12px;
+  color: var(--mkv-text-muted);
+}
+
+.mkv-topbar-status {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--mkv-text-muted);
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--mkv-surface-2);
+}
+
+/* ---------------- 主体布局 ---------------- */
+
+.mkv-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.mkv-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 320px;
+  min-width: 240px;
+  background: var(--mkv-surface);
+  border-right: 1px solid var(--mkv-border);
+  overflow: hidden;
+}
+
+.mkv-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ---------------- 检索 ---------------- */
+
+/* 检索区只有一个输入框：回车触发检索，无搜索按钮。
+   类名须与 SearchBar 的 mkv-searchbar 一致（曾误写为 .mkv-search 导致容器样式不生效）。 */
+.mkv-searchbar {
+  flex: 0 0 auto;
+  padding: 12px;
+  border-bottom: 1px solid var(--mkv-border);
+}
+
+.mkv-search-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 11px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--mkv-text);
+  background: var(--mkv-surface-2);
+  border: 1px solid var(--mkv-border);
+  border-radius: var(--mkv-radius);
+  outline: none;
+}
+
+.mkv-search-input::placeholder {
+  color: var(--mkv-text-muted);
+  opacity: 1;
+}
+
+.mkv-search-input:focus {
+  border-color: var(--mkv-accent);
+  background: var(--mkv-surface);
+}
+
+.mkv-results {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.mkv-results-empty {
+  padding: 20px 12px;
+  text-align: center;
+}
+
+.mkv-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--mkv-radius);
+  cursor: pointer;
+}
+
+.mkv-result:hover {
+  background: var(--mkv-surface-2);
+}
+
+.mkv-result-active {
+  background: var(--mkv-accent-soft);
+  border-color: var(--mkv-accent);
+}
+
+.mkv-result-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mkv-result-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--mkv-text-muted);
+}
+
+.mkv-result-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------- 侧栏列表页签 ---------------- */
+
+.mkv-list-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 8px 8px 0;
+  border-bottom: 1px solid var(--mkv-border);
+}
+
+.mkv-list-tabs .mkv-tab {
+  flex: 1 1 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.mkv-list-tabs .mkv-tab-active {
+  position: relative;
+  font-weight: 600;
+}
+
+/* ---------------- 预览区 ---------------- */
+
+.mkv-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--mkv-bg);
+}
+
+.mkv-preview-header {
+  display: flex;
+  align-items: center;
+  gap: var(--mkv-gap);
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  background: var(--mkv-surface);
+  border-bottom: 1px solid var(--mkv-border);
+}
+
+.mkv-preview-header h2 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--mkv-mono);
+}
+
+.mkv-preview-actions {
+  flex: 0 0 auto;
+}
+
+.mkv-preview-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 16px;
+}
+
+.mkv-doc-content {
+  margin: 0;
+  padding: 18px 20px;
+  font-family: var(--mkv-mono);
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--mkv-surface);
+  border: 1px solid var(--mkv-border);
+  border-radius: var(--mkv-radius);
+}
+
+.mkv-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--mkv-text-muted);
+}
+
+.mkv-empty h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--mkv-text);
+}
+
+/* ---------------- 双链面板 ---------------- */
+
+.mkv-backlinks {
+  flex: 0 0 280px;
+  min-width: 200px;
+  padding: 14px;
+  background: var(--mkv-surface);
+  border-left: 1px solid var(--mkv-border);
+  overflow-y: auto;
+}
+
+.mkv-backlinks h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mkv-backlink-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mkv-backlink {
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--mkv-border);
+  font-size: 13px;
+}
+
+.mkv-backlink-target {
+  display: block;
+  font-family: var(--mkv-mono);
+  font-size: 12px;
+}
+
+/* ---------------- 状态栏 ---------------- */
+
+.mkv-statusbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--mkv-text-muted);
+  background: var(--mkv-surface);
+  border-top: 1px solid var(--mkv-border);
+}
+
+.mkv-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mkv-progress-bar {
+  width: 120px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--mkv-accent);
+}
+
+/* ---------------- 通用 ---------------- */
+
+.mkv-muted {
+  color: var(--mkv-text-muted);
+}
+
+.mkv-danger {
+  color: var(--mkv-danger);
+}
+
+/* ---------------- 按钮 ---------------- */
+
+.mkv-btn {
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--mkv-text);
+  background: var(--mkv-surface-2);
+  border: 1px solid var(--mkv-border);
+  border-radius: var(--mkv-radius);
+  cursor: pointer;
+}
+
+.mkv-btn:hover {
+  border-color: var(--mkv-accent);
+}
+
+.mkv-btn-primary {
+  color: #ffffff;
+  background: var(--mkv-accent);
+  border-color: var(--mkv-accent);
+}
+
+.mkv-btn-ghost {
+  background: transparent;
+}
+
+.mkv-btn-danger {
+  color: var(--mkv-danger);
+}
+
+.mkv-btn-sm {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+/* ---------------- 内置编辑器外壳 ---------------- */
+
+.mkv-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--mkv-bg);
+  border-top: 2px solid var(--mkv-accent);
+}
+
+.mkv-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--mkv-gap);
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  background: var(--mkv-surface);
+  border-bottom: 1px solid var(--mkv-border);
+}
+
+.mkv-editor-name {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--mkv-accent);
+  border-radius: 999px;
+}
+
+.mkv-editor-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mkv-mono);
+  font-size: 12px;
+}
+
+.mkv-editor-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.mkv-editor-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px;
+}
+
+/* ---------------- GridCraft ---------------- */
+
+.mkv-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+}
+
+.mkv-grid-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mkv-tab {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--mkv-text);
+  background: var(--mkv-surface);
+  border: 1px solid var(--mkv-border);
+  border-radius: var(--mkv-radius);
+  cursor: pointer;
+}
+
+.mkv-tab-active {
+  color: var(--mkv-accent);
+  background: var(--mkv-accent-soft);
+  border-color: var(--mkv-accent);
+}
+
+.mkv-grid-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mkv-grid-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--mkv-surface);
+  border: 1px solid var(--mkv-border);
+  border-radius: var(--mkv-radius);
+}
+
+.mkv-grid-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.mkv-grid-table th,
+.mkv-grid-table td {
+  border: 1px solid var(--mkv-border);
+  padding: 0;
+}
+
+.mkv-grid-colnum,
+.mkv-grid-rownum {
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: var(--mkv-mono);
+  color: var(--mkv-text-muted);
+  background: var(--mkv-surface-2);
+  text-align: center;
+  user-select: none;
+}
+
+.mkv-grid-colnum,
+.mkv-grid-rownum {
+  cursor: pointer;
+}
+
+.mkv-grid-cell {
+  width: 130px;
+  min-width: 90px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--mkv-text);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.mkv-grid-cell:focus {
+  background: var(--mkv-accent-soft);
+}
+
+/* ---------------- DeckCraft ---------------- */
+
+.mkv-deck {
+  display: flex;
+  gap: var(--mkv-gap);
+  height: 100%;
+}
+
+.mkv-deck-pages {
+  flex: 0 0 190px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mkv-deck-page-btn {
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--mkv-surface);
+  border: 1px solid var(--mkv-border);
+  border-radius: var(--mkv-radius);
+  cursor: pointer;
+}
+
+.mkv-deck-page-active .mkv-deck-page-btn {
+  border-color: var(--mkv-accent);
+  background: var(--mkv-accent-soft);
+}
+
+.mkv-deck-page-no {
+  font-size: 11px;
+  color: var(--mkv-text-muted);
+}
+
+.mkv-deck-page-title {
+  margin-top: 2px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mkv-deck-canvas {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mkv-deck-toolbar {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.mkv-deck-shape {
+  padding: 10px 12px;
+  background: var(--mkv-surface);
+  border: 1px solid var(--mkv-border);
+  border-radius: var(--mkv-radius);
+}
+
+.mkv-deck-shape-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--mkv-text-muted);
+}
+
+.mkv-badge {
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--mkv-accent);
+  background: var(--mkv-accent-soft);
+  border-radius: 999px;
+}
+
+.mkv-deck-text,
+.mkv-word-text {
+  width: 100%;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--mkv-text);
+  background: var(--mkv-surface-2);
+  border: 1px solid var(--mkv-border);
+  border-radius: 6px;
+  outline: none;
+  resize: vertical;
+}
+
+.mkv-deck-text:focus,
+.mkv-word-text:focus {
+  border-color: var(--mkv-accent);
+  background: var(--mkv-surface);
+}
+
+/* ---------------- WordCraft ---------------- */
+
+.mkv-word {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+}
+
+.mkv-word-toolbar {
+  display: flex;
+  gap: 8px;
+}
+
+.mkv-word-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mkv-word-para {
+  padding: 8px 10px;
+  background: var(--mkv-surface);
+  border: 1px solid var(--mkv-border);
+  border-radius: var(--mkv-radius);
+}
+
+.mkv-word-para-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mkv-select {
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--mkv-text);
+  background: var(--mkv-surface-2);
+  border: 1px solid var(--mkv-border);
+  border-radius: 6px;
+}
+
+/* ---------------- 窄屏（移动端） ---------------- */
+
+@media (max-width: 760px) {
+  .mkv-body {
+    flex-direction: column;
+  }
+
+  .mkv-sidebar {
+    flex: 0 0 auto;
+    max-height: 42vh;
+    border-right: none;
+    border-bottom: 1px solid var(--mkv-border);
+  }
+
+  .mkv-backlinks {
+    flex: 0 0 auto;
+    max-height: 30vh;
+    border-left: none;
+    border-top: 1px solid var(--mkv-border);
+  }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "mkv-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Migrant Knowledge Vault 命令行工具：init / index / search / links / commit / demo"
+
+[[bin]]
+name = "mkv"
+path = "src/main.rs"
+
+[dependencies]
+mkv-core = { workspace = true, features = ["native"] }
+anyhow.workspace = true
