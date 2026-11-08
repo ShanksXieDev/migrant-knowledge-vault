@@ -20,7 +20,7 @@ v0.1 工程脚手架：**Rust 核心库 + Dioxus 三端（Desktop / Web / Mobile
 | 双链      | ✅  | `[[双链]]` / \`[[双链|别名]]`/`@文件名.ext\` 三种写法                       |
 | 反链 / 出链 | ✅  | 目标解析支持路径、文件名、主干、标题四级匹配                                         |
 | Git 版本  | ✅  | 提交、历史、差异、回滚；`.kbindex/` 自动忽略                                   |
-| 内置编辑器   | ✅  | GridCraft（Excel）/ DeckCraft（PPT 完整编辑）/ WordCraft（Word），始终读写原生文件 |
+| 内置编辑器   | ✅  | 三个独立插件 crate（GridCraft / DeckCraft / WordCraft），契约 v1，始终读写原生文件 |
 | Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**本地与线上各 28/28 项真实浏览器验证通过** |
 | 文件监听    | ✅  | `notify` 增量索引 + 双链重算；实测索引 51ms、端到端 175ms（PRD 要求 1s 内）        |
 | 静态发布 / CI | ✅  | 6 文件纯静态站点；CI 门禁 + Pages 自动发布；wasm 经 wasm-opt 压到约 705KB（[线上站点](https://shanksxiedev.github.io/migrant-knowledge-vault/)） |
@@ -53,15 +53,15 @@ Migrant-Knowledge-Vault/
 │   │   ├── src/editor.rs         #   编辑器路由 + EditSession
 │   │   ├── src/xml.rs            #   带字节偏移的 XML 节点树解析器（OOXML 外科改写底座）
 │   │   ├── src/ooxml.rs          #   OOXML 包管理：部件读写 / 关系 / 内容类型
-│   │   ├── src/gridcraft.rs      #   GridCraft：Excel 内置编辑器内核
-│   │   ├── src/deckcraft.rs      #   DeckCraft：PPT 内置编辑器内核（完整编辑）
-│   │   ├── src/wordcraft.rs      #   WordCraft：Word 内置编辑器内核
+│   │   ├── src/plugin.rs         #   编辑器插件契约 v1 + 注册表
+│   │   ├── src/editor_updates.rs #   上游版本检测 / 用户确认升级状态机
+│   │   ├── src/editor.rs         #   插件路由 + EditSession（不透明状态）
 │   │   ├── src/prebuilt.rs       #   预构建只读索引（Web 端只读检索）
 │   │   ├── src/prebuilt_export.rs#   预构建索引生成端（native，需 jieba）
 │   │   ├── src/demo.rs           #   六格式示例知识库生成器
 │   │   └── src/vault.rs          #   Vault 门面：统一 API + 索引文件锁
 │   ├── ui/                       # mkv-ui：Dioxus 共享组件（三端复用）
-│   │   ├── src/components/editors.rs # 内置编辑器面板（Grid/Deck/WordCraft）
+│   │   ├── src/components/editors.rs # 按 PluginView 通用渲染的插件面板 + 升级横幅
 │   │   └── assets/main.css       #   内联样式表（include_str!）
 │   ├── cli/                      # mkv-cli：命令行工具（mkv.exe）
 │   ├── desktop/                  # mkv-desktop：Dioxus desktop
@@ -69,7 +69,12 @@ Migrant-Knowledge-Vault/
 │   │   ├── build.rs              #   把索引产物嵌入 wasm 二进制
 │   │   ├── assets/mkv-index.json #   约定路径的预构建索引产物
 │   │   └── src/loader.rs         #   索引加载器（内嵌 / 远端热替换）
-│   └── mobile/                   # mkv-mobile：Dioxus mobile
+│   ├── mobile/                   # mkv-mobile：Dioxus mobile
+│   ├── plugins/                  # 三个独立编辑器插件 crate
+│   │   ├── gridcraft/            #   mkv-editor-gridcraft（XLSX 外科读写）
+│   │   ├── deckcraft/            #   mkv-editor-deckcraft（PPTX 外科读写）
+│   │   └── wordcraft/            #   mkv-editor-wordcraft（DOCX 外科读写）
+│   └── editors/                  # mkv-editors：启动注入插件（Web 不链接）
 ├── scripts/build-web.sh          # Web 端一键构建（导出产物 → 编译 wasm）
 └── examples/sample-vault/        # 示例知识库（含已落盘的 .kbindex/）
 ```
@@ -257,6 +262,62 @@ Markdown / 纯文本 / Visio / Drawio **不提供**内置编辑器（按设计�
 - 保存后触发 `index.update`，增量重建该文档的索引与双链（PRD 要求 1 秒内）；
 - Web 端：预构建只读索引，**不提供**编辑入口（界面显示「Web 端为只读索引」）。
 
+### 9.5 插件化改造与上游跟随（2026-11-08）
+
+三个名字不是本项目自研模块，而是**真实存在的上游 Rust 项目**：
+
+| 上游仓库 | 许可 | 本次对齐的 commit |
+|---|---|---|
+| `storytold/gridcraft` | MIT OR Apache-2.0 | `640fbf22f64e` |
+| `storytold/deckcraft` | MIT OR Apache-2.0 | `c16db2ef3e00` |
+| `storytold/wordcraft` | MIT OR Apache-2.0 | `4afff61f1097` |
+
+三者都是 edition 2024 / rust-version 1.95 的大型 workspace（egui 应用 + 格式 crate +
+`craft-libs` git 依赖），且在持续推送。直接把整个 workspace 拉进本项目会破坏
+`wasm < 800KB` 门禁与「包级外科手术」保真约束（上游格式 crate 是
+「解析 → 内存模型 → 全量重写」，会丢排版 / 主题 / 样式），因此采用
+**独立插件 crate + 稳定契约**：
+
+| 层 | 位置 | 职责 |
+|---|---|---|
+| 契约 | `packages/core/src/plugin.rs` | `EditorPlugin` trait、契约版本 v1、`PluginView` / `PluginAction` DTO、`PluginRegistry` |
+| 插件 | `packages/plugins/{gridcraft,deckcraft,wordcraft}` | 各自保留外科手术读写；私有模型用 JSON 字节交换 |
+| 聚合 | `packages/editors` | `mkv_editors::install()`，Desktop / CLI / Mobile 启动时注入 |
+| UI | `packages/ui/src/components/editors.rs` | 按 `PluginView` 通用渲染，不认识任何插件私有类型 |
+| 升级 | `packages/core/src/editor_updates.rs` + `editors.lock` | 启动检测、用户确认、状态持久化 |
+
+Web 只读端**不链接** `mkv-editors`，编辑器实现因此完全不进入 wasm 产物。
+`EditSession` 改为 `{ rel_path, original, plugin_id, document: PluginDocument }`，
+`PluginDocument.state` 对宿主不透明；换实现、加编辑器都不用改 core / UI。
+
+#### 上游更新跟随：启动检测 + 用户确认
+
+`editors.lock`（仓库根）记录三个上游 repo / 分支 / pin 的 commit SHA 与契约版本。
+应用启动时的 `EditorUpdateBanner` 检测远端 HEAD，发现差异后由**用户确认**是否升级：
+
+- 双通道探测：`git ls-remote` 优先，失败回退 GitHub commits API。
+  实测本机代理对 git 的 CONNECT 隧道返回 502，但普通 HTTPS GET 正常；
+  离线 / 双通道失败时静默降级，不打断启动、不弹横幅。
+- 用户可选「更新 / 跳过此版本 / 稍后」；决定写入知识库
+  `.kbindex/editors.json`（pin rev、`skipped_revisions`、`pending`），跨启动持久。
+- **边界**：插件是编译期 crate，运行时无法替换已链接进二进制的代码。
+  确认升级只落地目标 rev 与 `requires_rebuild` 标记，源码同步和重建由下面命令完成，
+  重建后重启应用生效；不做「点一下就立刻换代码」的虚假承诺。
+
+```bash
+mkv editors plugins                  # 已装插件与对齐的 upstream rev
+mkv editors check   <root>           # 与启动检测同款逻辑，CLI 复核
+mkv editors confirm <root>           # 无 GUI 时确认升级全部待更新插件
+mkv editors skip    <root>           # 跳过当前版本
+mkv editors upgrade <root>           # 按已确认 rev 同步源码并清除待重建标记
+bash scripts/sync-editors.sh --check # 只读探测，输出 docs/editor-updates/report.json
+cargo build --workspace              # 重建插件，重启应用生效
+```
+
+> 实测（2026-11-08）：会话期间上游 `deckcraft` / `wordcraft` 又各产生新提交，
+> 双通道检测稳定报出 2 项更新，`confirm` 后 pin rev 与 `pending` 正确落盘、
+> 再次检测归零 —— 跟随链路端到端可用。
+
 ---
 
 ## 10. Web 端：预构建只读索引
@@ -410,8 +471,8 @@ cargo run -p mkv-cli -- watch D:/MyVault --debounce 200 --auto-commit
 ```bash
 scripts/publish-web.sh [vault_dir] [dict.txt]
 # → dist/：index.html + 1 个 JS + 1 个 wasm + mkv-index.json + .nojekyll + deploy-info.json
-# 实测 6 个文件 / 约 760 KB，零后端、完全离线
-# （F-06 后 wasm 经 wasm-opt 从 1,291,799B 压到 705,285B；见 §12.7）
+# 实测 6 个文件 / 约 795 KB，零后端、完全离线
+# （插件化后 wasm 经 wasm-opt 从 1,338,199B 压到 724,696B；见 §12.7）
 ```
 
 脚本串联「导出索引 → `dx build --release` → 精确复制 → 路径相对化」。
@@ -456,12 +517,12 @@ HTTP 500 回落、空索引回落、顶栏知识库名同步。报告：`docs/br
 
 | 门禁 | 内容 |
 |---|---|
-| 测试 | `cargo test --workspace`（139 项全绿） |
+| 测试 | `cargo test --workspace`（157 项全绿） |
 | 移动端 | `cargo build -p mkv-mobile` 编译门禁；**真机验证仍需人工** |
 | 依赖 | wasm32 依赖树零 `tantivy / jieba / zstd / rusqlite / git2 / notify / cc` |
 | 构建 | `scripts/publish-web.sh` + 产物清单校验 + **wasm < 800KB 体积门禁** |
 | 浏览器 | `dist/` 起静态服务 → Playwright Chromium 跑 28 项交互回归 |
-| 发布 | main 分支自动 `actions/deploy-pages`（run #7–#11 连续实测 success）；PR 只验证不发布 |
+| 发布 | main 分支自动 `actions/deploy-pages`（run #7–#12 连续实测 success）；PR 只验证不发布 |
 
 CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—— Windows MSVC 的
 `link.exe` 链接 proc-macro DLL 会挂起，源码编译不可靠。
@@ -549,8 +610,11 @@ Playwright Chromium 28 项交互回归 / 上传 Pages 产物），`deploy` job �
 > 需在 Python 侧转成 `C:/...` 并补 `.exe` 后缀，否则会误判「未找到 wasm-opt」（本轮实测踩过）。
 
 > **F-06 之后**：新增引用解析与示例文档，本地 wasm 1,291,799B → **705,285B（-45.4%）**、
-> CI/Linux 1,239,166B → **706,213B**；仍低于 800KB 门禁（run #11 实测通过）；
-> 索引 JSON 因新增 `refs` 字段从 14,174B 增至 19,464B。
+> CI/Linux 1,239,166B → **706,213B**；索引 JSON 因新增 `refs` 字段增至 19,464B。
+>
+> **插件化之后**：编辑器实现移出 core，但新增契约层与启动升级横幅，
+> 本地 wasm 1,338,199B → **724,696B（-45.8%）**，仍低于 800KB 门禁（余量约 75KB）；
+> CI/Linux 数值随本次 main 推送的上线复核回填。
 
 ---
 
@@ -660,6 +724,7 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 3. **F-06 进阶**：编辑器内插入引用的入口、源变更差异高亮、原生 Office 应用内定位
 4. **F-10 图谱进阶**：力导向聚类、按标签着色、大库虚拟渲染
 5. **Node.js 20 警告**：CI 中 `actions/*` 的 Node 20 deprecation 提示，待官方迁移后评估升级
+6. **插件升级链路真机验收**：Desktop GUI 确认横幅、重建后重启生效的实际窗口行为
 
 > 2026-11-08：技术债务已清理，P0 文件监听、P1 静态发布（方案 A）+ CI 门禁、
 > Desktop UI 自动刷新与 F-08 外部唤起均已落地。代码已推送到 GitHub，
@@ -670,4 +735,8 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 > CI 1,192,134B → 667,487B；检索结果精确定位与 F-10 双链图谱落地；
 > **F-06 跨格式引用已完成并上线**（§13.6）：引用处内联源片段、刷新与点选跳转；
 > **139 项测试 + 本地 28/28、线上 28/28 项浏览器回归全绿**（run #11 `42452731879` Success，
-> #7–#11 连续 success）；线上结论已回填。
+> #7–#12 连续 success）；线上结论已回填。
+> **编辑器已插件化**（§9.5）：三个独立插件 crate + 契约 v1 + 启动检测 / 用户确认升级，
+> 对齐 `storytold/{gridcraft,deckcraft,wordcraft}` 的真实 commit；
+> **157 项测试 + 本地 28/28 项浏览器回归全绿**，wasm 724,696B 仍过 800KB 门禁；
+> 线上结论随本次 main 推送的 CI 复核回填。

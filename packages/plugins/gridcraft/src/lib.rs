@@ -13,12 +13,14 @@
 //! 公式计算、图表编辑、单元格样式编辑 —— 这些复杂版式一律回落外部 Office
 //! （见技术方案设计 §5「内置编辑以结构化字段编辑为主，复杂版式回落外部」）。
 
-use crate::error::{Error, Result};
-use crate::ooxml::{content_type, rel_type, ContentTypes, OoxmlPackage, Relationships};
-use crate::xml::{self, escape, XmlNode};
+use serde::{Deserialize, Serialize};
+
+use mkv_core::error::{Error, Result};
+use mkv_core::ooxml::{content_type, rel_type, ContentTypes, OoxmlPackage, Relationships};
+use mkv_core::xml::{self, escape, XmlNode};
 
 /// 单元格值。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum CellValue {
     /// 空单元格。
     #[default]
@@ -49,7 +51,7 @@ impl CellValue {
 }
 
 /// 一个单元格。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cell {
     /// 列号（0 基）。
     pub col: usize,
@@ -67,7 +69,7 @@ impl Cell {
 }
 
 /// 一张工作表。
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Sheet {
     /// 工作表名。
     pub name: String,
@@ -112,7 +114,7 @@ impl Sheet {
 }
 
 /// 一个 Excel 工作簿（可编辑模型）。
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Workbook {
     /// 全部工作表。
     pub sheets: Vec<Sheet>,
@@ -564,7 +566,7 @@ fn workbook_skeleton() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::demo;
+    use mkv_core::demo;
 
     /// 生成示例 xlsx 字节。
     ///
@@ -665,3 +667,6 @@ mod tests {
         assert_eq!(wb2.sheets[0].get(0, 1), &CellValue::Bool(true));
     }
 }
+
+mod plugin;
+pub use plugin::*;

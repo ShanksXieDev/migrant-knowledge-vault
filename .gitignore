@@ -22,3 +22,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.iml
+
+# 上游编辑器插件源码同步产物（体积大，不入库）
+.plugins/

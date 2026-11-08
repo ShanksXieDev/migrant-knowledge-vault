@@ -857,3 +857,16 @@ body {
 }
 .mkv-ref-unresolved { background: var(--mkv-surface-2); border-color: var(--mkv-danger); }
 .mkv-ref-unresolved .mkv-ref-card-head { color: var(--mkv-danger); }
+
+/* ---- 插件上游升级提示（启动时检测，用户确认） ---- */
+.mkv-update-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; background: var(--mkv-accent-soft);
+  border-bottom: 1px solid var(--mkv-border); font-size: 0.88em;
+}
+.mkv-update-text { flex: 1 1 240px; color: var(--mkv-text); }
+.mkv-editor select, .mkv-editor textarea {
+  font: inherit; color: var(--mkv-text); background: var(--mkv-surface);
+  border: 1px solid var(--mkv-border); border-radius: 6px; padding: 4px 6px;
+}
+.mkv-editor input { width: 100%; box-sizing: border-box; }

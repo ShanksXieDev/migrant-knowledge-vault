@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Migrant Knowledge Vault 桌面端（Dioxus desktop）"
 
 [dependencies]
+mkv-editors = { path = "../editors" }
 mkv-core = { workspace = true, features = ["native"] }
 mkv-ui.workspace = true
 dioxus = { workspace = true, features = ["desktop", "launch", "macro", "signals", "hooks", "html"] }

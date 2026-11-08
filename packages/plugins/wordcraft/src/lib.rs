@@ -16,12 +16,14 @@
 //! 因此只做局部修改时保真度很高；整篇重写时降级为纯文本。
 //! 需要严格保真的排版请回落外部 Word。
 
-use crate::error::{Error, Result};
-use crate::ooxml::OoxmlPackage;
-use crate::xml::{self, escape};
+use serde::{Deserialize, Serialize};
+
+use mkv_core::error::{Error, Result};
+use mkv_core::ooxml::OoxmlPackage;
+use mkv_core::xml::{self, escape};
 
 /// 段落样式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ParaStyle {
     /// 正文。
     #[default]
@@ -77,7 +79,7 @@ impl ParaStyle {
 }
 
 /// 一个段落。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Paragraph {
     /// 段落文本。
     pub text: String,
@@ -90,7 +92,7 @@ pub struct Paragraph {
 }
 
 /// 一个 Word 文档（可编辑模型）。
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     /// 段落列表。
     pub paragraphs: Vec<Paragraph>,
@@ -295,7 +297,7 @@ pub fn remove_paragraph(doc: &mut Document, index: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::demo;
+    use mkv_core::demo;
 
     /// 生成示例 docx 字节（每个测试独立目录，避免并行冲突）。
     fn sample_bytes(tag: &str) -> Vec<u8> {
@@ -393,3 +395,6 @@ pub fn word_set_style_at(doc: &mut Document, index: usize, style: ParaStyle) {
         p.dirty = true;
     }
 }
+
+mod plugin;
+pub use plugin::*;

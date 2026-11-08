@@ -19,7 +19,9 @@ use mkv_core::types::{DocumentRecord, LinkRecord, SearchHit};
 
 pub mod components;
 
-pub use components::editors::{DeckCraftPanel, EditorHost, GridCraftPanel, WordCraftPanel};
+pub use components::editors::{
+    DeckCraftPanel, EditorHost, EditorUpdateBanner, GridCraftPanel, WordCraftPanel,
+};
 pub use components::SearchBar;
 
 /// 内联样式表。
@@ -162,6 +164,7 @@ pub fn AppShell(ctx: VaultContext) -> Element {
         style { "{STYLESHEET}" }
         div { class: "mkv-app",
             TopBar { ctx }
+            EditorUpdateBanner { ctx }
             div { class: "mkv-body",
                 SideBar { ctx }
                 MainPane { ctx }

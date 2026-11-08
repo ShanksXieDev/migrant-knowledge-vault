@@ -17,12 +17,14 @@
 //! 但由于新增页需要引用版式，新增页会复用**第一页的版式引用**。
 //! 复杂版式（SmartArt、图表、组合形状的精细排布）请回落外部 PowerPoint。
 
-use crate::error::{Error, Result};
-use crate::ooxml::{content_type, rel_type, ContentTypes, OoxmlPackage, Relationships};
-use crate::xml::{self, escape};
+use serde::{Deserialize, Serialize};
+
+use mkv_core::error::{Error, Result};
+use mkv_core::ooxml::{content_type, rel_type, ContentTypes, OoxmlPackage, Relationships};
+use mkv_core::xml::{self, escape};
 
 /// 一个文本段落。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Paragraph {
     /// 段落文本（可能含多行，以 `\n` 分隔）。
     pub text: String,
@@ -31,7 +33,7 @@ pub struct Paragraph {
 }
 
 /// 一个形状（文本框 / 标题 / 占位符）。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Shape {
     /// 形状 Id（`p:cNvPr/@id`）。
     pub id: String,
@@ -55,7 +57,7 @@ impl Shape {
 }
 
 /// 一页幻灯片。
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Slide {
     /// 幻灯片 Id（`p:sldId/@id`）。
     pub id: String,
@@ -78,7 +80,7 @@ impl Slide {
 }
 
 /// 一个演示文稿（可编辑模型）。
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Deck {
     /// 全部幻灯片（顺序即页序）。
     pub slides: Vec<Slide>,
@@ -450,7 +452,7 @@ pub fn add_slide_to_package(pkg: &mut OoxmlPackage) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::demo;
+    use mkv_core::demo;
 
     /// 生成示例 pptx 字节（每个测试独立目录，避免并行冲突）。
     fn sample_bytes(tag: &str) -> Vec<u8> {
@@ -538,3 +540,6 @@ mod tests {
         assert!(deck2.slides[1].shapes[0].full_text().contains("第二页内容"));
     }
 }
+
+mod plugin;
+pub use plugin::*;

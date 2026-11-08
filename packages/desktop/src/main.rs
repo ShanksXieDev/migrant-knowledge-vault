@@ -13,6 +13,12 @@ use mkv_core::native::NativeService;
 use mkv_ui::{AppShell, VaultContext};
 
 fn main() {
+    // 插件化编辑器：启动时把三个独立插件 crate 注入 core 注册表。
+    // Web 只读端不链接 mkv-editors，因此 wasm 产物里没有编辑器实现。
+    if let Err(e) = mkv_editors::install() {
+        eprintln!("[mkv] 编辑器插件安装失败: {e}");
+    }
+
     let args: Vec<String> = std::env::args().collect();
     let root = args.get(1).cloned().unwrap_or_else(|| ".".to_string());
 

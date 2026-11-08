@@ -12,5 +12,6 @@ name = "mkv"
 path = "src/main.rs"
 
 [dependencies]
+mkv-editors = { path = "../editors" }
 mkv-core = { workspace = true, features = ["native"] }
 anyhow.workspace = true

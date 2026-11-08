@@ -1,0 +1,29 @@
+{
+  "contract_version": 1,
+  "_comment": "三个上游 Craft 项目的构建期基线 rev。应用启动时检测远端 HEAD，用户确认后写入知识库 .kbindex/editors.json；代码重建由 scripts/sync-editors.sh 完成。",
+  "plugins": [
+    {
+      "id": "gridcraft",
+      "repo": "storytold/gridcraft",
+      "branch": "main",
+      "pinned_rev": "640fbf22f64e8726188ff604480a2c6f3e6aad42",
+      "contract_version": 1
+    },
+    {
+      "id": "deckcraft",
+      "repo": "storytold/deckcraft",
+      "branch": "main",
+      "pinned_rev": "c16db2ef3e00161cbf10d8f20c9e177c5c77dbd7",
+      "contract_version": 1
+    },
+    {
+      "id": "wordcraft",
+      "repo": "storytold/wordcraft",
+      "branch": "main",
+      "pinned_rev": "4afff61f10978d885cd80cb38034e797304ae33d",
+      "contract_version": 1
+    }
+  ],
+  "skipped_revisions": [],
+  "pending": []
+}

@@ -1,0 +1,14 @@
+[package]
+name = "mkv-editors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "插件聚合层：应用启动时把三个内置编辑器插件注入 mkv-core 注册表"
+
+[dependencies]
+mkv-core = { path = "../core", default-features = false }
+mkv-editor-gridcraft = { path = "../plugins/gridcraft" }
+mkv-editor-deckcraft = { path = "../plugins/deckcraft" }
+mkv-editor-wordcraft = { path = "../plugins/wordcraft" }

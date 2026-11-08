@@ -31,6 +31,9 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    // CLI 也会用到内置编辑器路由（测试 / 运维），启动时注入插件。
+    let _ = mkv_editors::install();
+
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(cmd) = args.first().map(|s| s.as_str()) else {
         print_help();
@@ -50,6 +53,7 @@ fn run() -> Result<()> {
         "dict" => cmd_dict(root_arg(rest)?, path_arg(rest)?),
         "export-web" => cmd_export_web(root_arg(rest)?, rest),
         "watch" => cmd_watch(root_arg(rest)?, rest),
+        "editors" => cmd_editors(rest),
         "-h" | "--help" | "help" => {
             print_help();
             Ok(())
@@ -81,8 +85,128 @@ fn print_help() {
   mkv watch  <root> [选项]       监听文件变化，增量更新索引与双链
        --debounce <ms>          去抖窗口（默认 250）
        --auto-commit            每批变更后自动 Git 提交（默认关闭）
+  mkv editors plugins           列出已安装的编辑器插件与对齐的上游 rev
+  mkv editors check <root>      检测三个上游 Craft 仓库是否有新提交
+  mkv editors confirm <root>    无 GUI 时确认升级全部待更新插件
+  mkv editors skip <root>       跳过当前检测到的上游版本
+  mkv editors upgrade <root>    同步用户已确认的上游 rev 并清除待重建标记
 "#
     );
+}
+
+/// 编辑器插件运维：查看插件、检测上游、应用用户已确认的升级。
+fn cmd_editors(rest: &[String]) -> Result<()> {
+    use mkv_core::editor_updates as updates;
+
+    let sub = rest.first().map(|s| s.as_str()).unwrap_or("plugins");
+    match sub {
+        "plugins" => {
+            let registry = mkv_core::plugin::registry()
+                .read()
+                .map_err(|_| anyhow::anyhow!("插件注册表锁已损坏"))?;
+            println!("已安装的编辑器插件：");
+            for d in registry.descriptors() {
+                let short = &d.upstream_rev[..d.upstream_rev.len().min(12)];
+                println!(
+                    "  {:<10} {:<6} backend={:<8} upstream={}@{} contract=v{}",
+                    d.id, d.format_key, d.backend, d.upstream_repo, short, d.contract_version
+                );
+            }
+            Ok(())
+        }
+        "check" => {
+            let root = root_arg(&rest[1..])?;
+            let lock = updates::load_state(&root);
+            let remote = updates::detect_remote_revisions(&lock);
+            let plan = updates::plan_updates(&lock, &remote);
+            println!("上游检测（{} 个插件）：", lock.plugins.len());
+            if plan.items.is_empty() {
+                println!("  全部与锁文件一致，或离线导致探测失败（不视为错误）");
+            }
+            for item in &plan.items {
+                println!(
+                    "  {:<10} {} -> {}{}",
+                    item.id,
+                    &item.from_rev[..12.min(item.from_rev.len())],
+                    &item.to_rev[..12.min(item.to_rev.len())],
+                    if item.skipped { "（已跳过）" } else { "" }
+                );
+            }
+            println!("可升级插件：{} 个", plan.actionable_ids().len());
+            Ok(())
+        }
+        "confirm" | "skip" => {
+            let root = root_arg(&rest[1..])?;
+            let mut lock = updates::load_state(&root);
+            let remote = updates::detect_remote_revisions(&lock);
+            let plan = updates::plan_updates(&lock, &remote);
+            let ids = plan.actionable_ids();
+            if ids.is_empty() {
+                println!("没有待确认的上游更新。");
+                return Ok(());
+            }
+            let choice = if sub == "confirm" {
+                updates::UpdateChoice::Upgrade { ids: ids.clone() }
+            } else {
+                updates::UpdateChoice::Skip { ids: ids.clone() }
+            };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| format!("unix:{}", d.as_secs()))
+                .unwrap_or_else(|_| "unix:0".to_string());
+            let n = updates::apply_choice(&mut lock, &plan, &choice, &now);
+            updates::save_state(&root, &lock)?;
+            if sub == "confirm" {
+                println!(
+                    "已确认升级 {n} 个插件；运行 mkv editors upgrade 同步源码，再重建并重启应用。"
+                );
+            } else {
+                println!("已跳过 {n} 个上游版本，之后不再提示这些版本。");
+            }
+            Ok(())
+        }
+        "upgrade" => {
+            let root = root_arg(&rest[1..])?;
+            let mut lock = updates::load_state(&root);
+            let pending: Vec<String> = lock
+                .pending
+                .iter()
+                .map(|p| p.plugin_id.clone())
+                .collect();
+            if pending.is_empty() {
+                println!("没有待应用的升级；请先在应用启动时确认版本更新。");
+                return Ok(());
+            }
+            let script = std::env::current_dir()?.join("scripts/sync-editors.sh");
+            if !script.exists() {
+                println!(
+                    "未找到同步脚本 {}；请在仓库根目录手动运行：",
+                    script.display()
+                );
+                println!("  bash scripts/sync-editors.sh --apply --root <知识库目录>");
+                return Ok(());
+            }
+            let status = std::process::Command::new("bash")
+                .arg(&script)
+                .arg("--apply")
+                .arg("--root")
+                .arg(&root)
+                .status()
+                .context("执行上游同步脚本失败")?;
+            if !status.success() {
+                anyhow::bail!("同步脚本失败（退出码 {status}），待重建标记保持原样");
+            }
+            let cleared = updates::clear_pending(&mut lock, &pending);
+            updates::save_state(&root, &lock)?;
+            println!(
+                "已同步并清除 {cleared} 个待重建标记；下一步：cargo build --workspace 重建插件并重启应用。"
+            );
+            Ok(())
+        }
+        other => {
+            anyhow::bail!("未知的 editors 子命令: {other}（可用 plugins / check / upgrade）")
+        }
+    }
 }
 
 // ------------------------------------------------------------------ 参数

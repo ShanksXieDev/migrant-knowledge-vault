@@ -1,42 +1,55 @@
-//! 内置编辑器面板：GridCraft / DeckCraft / WordCraft。
+//! 插件化编辑器面板与上游升级提示。
 //!
-//! 三个编辑器共享同一套交互骨架：
-//! - 顶部工具条：编辑器名、保存、退出编辑；
-//! - 主体：按格式分发的编辑区；
-//! - 保存时把编辑后的会话交回 `KnowledgeService::save_editor`，
-//!   由其写回**原生文件**并增量重建索引与双链。
+//! # 与 v0.1 的区别
 //!
-//! # 状态管理
+//! 旧版直接把 `EditDocument::{Workbook, Deck, Word}` 的三个模型塞进 UI，
+//! 换个实现就要改 UI。现在 UI 只认 `mkv_core::plugin` 的稳定 DTO：
 //!
-//! 编辑态统一存放在 [`EditSession`] 中，面板通过 `Signal<EditSession>`
-//! 的**写守卫**（`write()`）直接修改 `session.document`，
-//! 这样「保存」按钮拿到的就是最新内容，无需额外的同步逻辑。
+//! ```text
+//!   plugin::view(&session)         → PluginView（Grid / Deck / Word）
+//!            ↓ 渲染
+//!   用户操作 → PluginAction        → plugin::apply_action(&mut session, ..)
+//!            ↓ 保存
+//!   KnowledgeService::save_editor  → 插件 serialize() → 原生文件 + 增量索引
+//! ```
 //!
-//! 注意：dioxus 的 `Signal` 调用语法 `sig()` 返回的是**克隆**，
-//! 直接对其取可变引用会丢失修改 —— 必须走 `write()` 守卫。
+//! 因此新增 / 替换编辑器插件都不需要改本文件；Web 只读端未安装插件时
+//! `view()` 返回错误，面板自然不渲染，也不会出现「假编辑入口」。
+//!
+//! 子组件化还有一个工程原因：Dioxus 的事件闭包要求 `'static`，
+//! 不能捕获 `rsx!` 循环里的临时引用，所以把每行 / 每页 / 每段做成
+//! 接收 owned props 的子组件。
 
 use dioxus::prelude::*;
-use mkv_core::editor::{
-    deck_move_slide, deck_remove_slide, deck_set_shape_text, grid_insert_col, grid_insert_row,
-    grid_remove_col, grid_remove_row, EditDocument, EditSession,
+use mkv_core::editor::EditSession;
+use mkv_core::editor_updates::{UpdateChoice, UpdatePlan};
+use mkv_core::plugin::{
+    self, CellView, ParagraphView, PluginAction, PluginView, ShapeView, SlideView,
 };
-use mkv_core::gridcraft::CellValue;
-use mkv_core::wordcraft::{self, ParaStyle};
 
 use crate::VaultContext;
 
-/// 编辑器宿主：按文档格式挂载对应的内置编辑器。
+/// 把动作交给当前会话的插件；失败只记日志，保持原状态。
+fn apply(edit: &mut Signal<EditSession>, action: PluginAction) {
+    let mut guard = edit.write();
+    if let Err(e) = plugin::apply_action(&mut *guard, &action) {
+        eprintln!("[mkv-editor] 插件动作失败: {e}");
+    }
+}
+
+/// 编辑器宿主：按插件声明的视图形态挂载通用面板。
 #[component]
 pub fn EditorHost(ctx: VaultContext, session: EditSession) -> Element {
-    // 编辑态的唯一数据源：面板与保存按钮共享它
     let edit = use_signal(|| session);
-
-    let editor_name = match &edit.read().document {
-        EditDocument::Workbook(_) => "GridCraft",
-        EditDocument::Deck(_) => "DeckCraft",
-        EditDocument::Word(_) => "WordCraft",
-    };
-    let rel_path = edit.read().rel_path.clone();
+    let current = edit.read().clone();
+    let view = plugin::view(&current).ok();
+    let editor_name = plugin::registry()
+        .read()
+        .ok()
+        .and_then(|r| r.get(&current.plugin_id))
+        .map(|p| p.descriptor().display_name)
+        .unwrap_or_else(|| "插件编辑器".to_string());
+    let rel_path = current.rel_path.clone();
 
     rsx! {
         section { class: "mkv-editor",
@@ -48,7 +61,6 @@ pub fn EditorHost(ctx: VaultContext, session: EditSession) -> Element {
                         class: "mkv-btn mkv-btn-primary",
                         onclick: move |_| {
                             let mut status = ctx.status;
-                            // 取当前编辑态并写回
                             let current = edit.read().clone();
                             match ctx.service.read().save_editor(&current) {
                                 Ok(()) => status.set("已保存原生文件并更新索引".to_string()),
@@ -70,176 +82,123 @@ pub fn EditorHost(ctx: VaultContext, session: EditSession) -> Element {
                 }
             }
             div { class: "mkv-editor-body",
-                match &edit.read().document {
-                    EditDocument::Workbook(_) => rsx! { GridCraftPanel { edit } },
-                    EditDocument::Deck(_) => rsx! { DeckCraftPanel { edit } },
-                    EditDocument::Word(_) => rsx! { WordCraftPanel { edit } },
+                match view {
+                    Some(PluginView::Grid { .. }) => rsx! { GridCraftPanel { edit } },
+                    Some(PluginView::Deck { .. }) => rsx! { DeckCraftPanel { edit } },
+                    Some(PluginView::Word { .. }) => rsx! { WordCraftPanel { edit } },
+                    None => rsx! {
+                        div { class: "mkv-muted", "编辑器插件未安装或视图不可用" }
+                    },
                 }
             }
         }
     }
 }
 
-/// 从会话中取出工作簿的快照（只读克隆，避免长期持有守卫）。
-fn workbook_of(edit: &Signal<EditSession>) -> mkv_core::gridcraft::Workbook {
-    match &edit.read().document {
-        EditDocument::Workbook(wb) => wb.clone(),
-        _ => mkv_core::gridcraft::Workbook::default(),
+// ---------------------------------------------------------------- Grid 视图
+
+#[component]
+fn GridCell(edit: Signal<EditSession>, sheet: usize, cell: CellView) -> Element {
+    let mut edit = edit;
+    let row = cell.row;
+    let col = cell.col;
+    let text = cell.text;
+    rsx! {
+        td { class: "mkv-grid-cell",
+            input {
+                value: "{text}",
+                onchange: move |ev| apply(&mut edit, PluginAction::SetCell {
+                    sheet, row, col, text: ev.value(),
+                }),
+            }
+        }
     }
 }
 
-/// 从会话中取出演示文稿快照。
-fn deck_of(edit: &Signal<EditSession>) -> mkv_core::deckcraft::Deck {
-    match &edit.read().document {
-        EditDocument::Deck(d) => d.clone(),
-        _ => mkv_core::deckcraft::Deck::default(),
-    }
-}
-
-/// 从会话中取出文档快照。
-fn word_of(edit: &Signal<EditSession>) -> mkv_core::wordcraft::Document {
-    match &edit.read().document {
-        EditDocument::Word(d) => d.clone(),
-        _ => mkv_core::wordcraft::Document::default(),
-    }
-}
-
-// ---------------------------------------------------------------- GridCraft
-
-/// GridCraft：Excel 台账编辑器。
+/// 表格视图通用面板（由 `PluginView::Grid` 驱动，不依赖具体插件模型）。
 #[component]
 pub fn GridCraftPanel(edit: Signal<EditSession>) -> Element {
-    let wb = workbook_of(&edit);
+    let mut edit = edit;
+    let session = edit.read().clone();
+    let Some(PluginView::Grid { sheets }) = plugin::view(&session).ok() else {
+        return rsx! { div { class: "mkv-muted", "该插件未提供表格视图" } };
+    };
     let sheet_idx = use_signal(|| 0usize);
-    // 选中行 / 选中列：决定插入与删除的位置
-    let sel_row = use_signal(|| 0usize);
-    let sel_col = use_signal(|| 0usize);
+    let current_sheet = *sheet_idx.peek();
+    let Some(sheet) = sheets.get(current_sheet).cloned() else {
+        return rsx! { div { class: "mkv-muted", "工作簿没有工作表" } };
+    };
 
-    let current = sheet_idx.read().clone();
-    let sheets = wb.sheets.clone();
-    let sheet = sheets.get(current).cloned();
+    // 稀疏单元格 → 二维显示矩阵（补齐空格，保证行列增删后视觉稳定）
+    let rows = sheet.rows.max(1);
+    let cols = sheet.cols.max(1);
+    let mut grid: Vec<Vec<CellView>> = (0..rows)
+        .map(|r| {
+            (0..cols)
+                .map(|c| CellView {
+                    row: r,
+                    col: c,
+                    text: String::new(),
+                })
+                .collect()
+        })
+        .collect();
+    for c in &sheet.cells {
+        if c.row < rows && c.col < cols {
+            grid[c.row][c.col] = c.clone();
+        }
+    }
+    let tab_names: Vec<(usize, String)> = sheets
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (i, s.name.clone()))
+        .collect();
 
     rsx! {
         div { class: "mkv-grid",
             div { class: "mkv-grid-tabs",
-                for (i, s) in sheets.iter().enumerate() {
+                for (i, name) in tab_names.into_iter() {
                     button {
-                        class: if i == current { "mkv-tab mkv-tab-active" } else { "mkv-tab" },
+                        class: "mkv-btn mkv-btn-sm",
                         onclick: move |_| {
-                            let mut idx = sheet_idx;
-                            idx.set(i);
+                            let mut s = sheet_idx;
+                            s.set(i);
                         },
-                        "{s.name}"
+                        "{name}"
                     }
                 }
             }
             div { class: "mkv-grid-toolbar",
+                span { class: "mkv-muted", "工作表 {current_sheet + 1} · {rows} 行 / {cols} 列" }
                 button {
                     class: "mkv-btn mkv-btn-sm",
-                    onclick: move |_| {
-                        let mut sig = edit;
-                        let si = sheet_idx.read().clone();
-                        let at = sel_row.read().clone();
-                        let mut guard = sig.write();
-                        if let EditDocument::Workbook(wb) = &mut guard.document {
-                            grid_insert_row(wb, si, at);
-                        }
-                    },
-                    "在选中行前插入"
+                    onclick: move |_| apply(&mut edit, PluginAction::InsertRow { sheet: current_sheet, at: 0 }),
+                    "在首行插入"
                 }
                 button {
                     class: "mkv-btn mkv-btn-sm",
-                    onclick: move |_| {
-                        let mut sig = edit;
-                        let si = sheet_idx.read().clone();
-                        let at = sel_row.read().clone();
-                        let mut guard = sig.write();
-                        if let EditDocument::Workbook(wb) = &mut guard.document {
-                            grid_remove_row(wb, si, at);
-                        }
-                    },
-                    "删除选中行"
+                    onclick: move |_| apply(&mut edit, PluginAction::RemoveRow { sheet: current_sheet, at: 0 }),
+                    "删除首行"
                 }
                 button {
                     class: "mkv-btn mkv-btn-sm",
-                    onclick: move |_| {
-                        let mut sig = edit;
-                        let si = sheet_idx.read().clone();
-                        let at = sel_col.read().clone();
-                        let mut guard = sig.write();
-                        if let EditDocument::Workbook(wb) = &mut guard.document {
-                            grid_insert_col(wb, si, at);
-                        }
-                    },
-                    "在选中列前插入"
+                    onclick: move |_| apply(&mut edit, PluginAction::InsertColumn { sheet: current_sheet, at: 0 }),
+                    "在首列插入"
                 }
                 button {
                     class: "mkv-btn mkv-btn-sm",
-                    onclick: move |_| {
-                        let mut sig = edit;
-                        let si = sheet_idx.read().clone();
-                        let at = sel_col.read().clone();
-                        let mut guard = sig.write();
-                        if let EditDocument::Workbook(wb) = &mut guard.document {
-                            grid_remove_col(wb, si, at);
-                        }
-                    },
-                    "删除选中列"
+                    onclick: move |_| apply(&mut edit, PluginAction::RemoveColumn { sheet: current_sheet, at: 0 }),
+                    "删除首列"
                 }
             }
-            if let Some(s) = sheet {
-                div { class: "mkv-grid-scroll",
-                    table { class: "mkv-grid-table",
-                        thead {
+            div { class: "mkv-grid-scroll",
+                table { class: "mkv-grid-table",
+                    tbody {
+                        for line in grid.iter() {
                             tr {
-                                td { class: "mkv-grid-rownum" }
-                                for c in 0..s.cols {
-                                    th {
-                                        class: "mkv-grid-colnum",
-                                        onclick: move |_| {
-                                            let mut sc = sel_col;
-                                            sc.set(c);
-                                        },
-                                        "{mkv_core::gridcraft::column_letter(c)}"
-                                    }
-                                }
-                            }
-                        }
-                        tbody {
-                            for r in 0..s.rows {
-                                tr {
-                                    td {
-                                        class: "mkv-grid-rownum",
-                                        onclick: move |_| {
-                                            let mut sr = sel_row;
-                                            sr.set(r);
-                                        },
-                                        "{r + 1}"
-                                    }
-                                    for c in 0..s.cols {
-                                        td {
-                                            input {
-                                                class: "mkv-grid-cell",
-                                                value: "{s.get(r, c).display()}",
-                                                oninput: move |e| {
-                                                    let text = e.value();
-                                                    let mut sig = edit;
-                                                    let si = sheet_idx.read().clone();
-                                                    let mut guard = sig.write();
-                                                    if let EditDocument::Workbook(wb) = &mut guard.document {
-                                                        let value = if text.is_empty() {
-                                                            CellValue::Empty
-                                                        } else {
-                                                            CellValue::Text(text)
-                                                        };
-                                                        if let Some(sheet) = wb.sheets.get_mut(si) {
-                                                            sheet.set(r, c, value);
-                                                        }
-                                                    }
-                                                },
-                                            }
-                                        }
-                                    }
+                                td { class: "mkv-grid-rownum", "{line[0].row + 1}" }
+                                for cell in line.iter() {
+                                    GridCell { edit, sheet: current_sheet, cell: cell.clone() }
                                 }
                             }
                         }
@@ -250,211 +209,237 @@ pub fn GridCraftPanel(edit: Signal<EditSession>) -> Element {
     }
 }
 
-// ---------------------------------------------------------------- DeckCraft
+// ---------------------------------------------------------------- Deck 视图
 
-/// DeckCraft：PPT 幻灯片编辑器（完整编辑：增删页、调整页序、编辑文本框）。
+#[component]
+fn ShapeEditor(edit: Signal<EditSession>, slide: usize, shape: ShapeView) -> Element {
+    let mut edit = edit;
+    let index = shape.index;
+    let text = shape.text;
+    rsx! {
+        textarea {
+            class: "mkv-word-text",
+            value: "{text}",
+            onchange: move |ev| apply(&mut edit, PluginAction::SetShapeText {
+                slide, shape: index, text: ev.value(),
+            }),
+        }
+    }
+}
+
+#[component]
+fn SlideEditor(edit: Signal<EditSession>, slide: SlideView) -> Element {
+    let mut edit = edit;
+    let index = slide.index;
+    let title = slide.title;
+    let shapes = slide.shapes;
+    rsx! {
+        div { class: "mkv-word-para",
+            div { class: "mkv-word-para-tools",
+                span { "第 {index + 1} 页 · {title}" }
+                button {
+                    class: "mkv-btn mkv-btn-sm",
+                    onclick: move |_| apply(&mut edit, PluginAction::MoveSlide {
+                        from: index, to: index.saturating_sub(1),
+                    }),
+                    "↑"
+                }
+                button {
+                    class: "mkv-btn mkv-btn-sm",
+                    onclick: move |_| apply(&mut edit, PluginAction::MoveSlide {
+                        from: index, to: index + 1,
+                    }),
+                    "↓"
+                }
+                button {
+                    class: "mkv-btn mkv-btn-sm",
+                    onclick: move |_| apply(&mut edit, PluginAction::RemoveSlide { index }),
+                    "删除页"
+                }
+            }
+            for shape in shapes.into_iter() {
+                ShapeEditor { edit, slide: index, shape }
+            }
+        }
+    }
+}
+
+/// 演示文稿视图通用面板。
 #[component]
 pub fn DeckCraftPanel(edit: Signal<EditSession>) -> Element {
-    let deck = deck_of(&edit);
-    let page_idx = use_signal(|| 0usize);
-
-    let current = page_idx.read().clone();
-    let slides = deck.slides.clone();
-    let slide = slides.get(current).cloned();
-
-    rsx! {
-        div { class: "mkv-deck",
-            div { class: "mkv-deck-pages",
-                for (i, s) in slides.iter().enumerate() {
-                    div {
-                        class: if i == current { "mkv-deck-page mkv-deck-page-active" } else { "mkv-deck-page" },
-                        button {
-                            class: "mkv-deck-page-btn",
-                            onclick: move |_| {
-                                let mut idx = page_idx;
-                                idx.set(i);
-                            },
-                            div { class: "mkv-deck-page-no", "第 {i + 1} 页" }
-                            div { class: "mkv-deck-page-title", "{s.title()}" }
-                        }
-                    }
-                }
-            }
-            div { class: "mkv-deck-toolbar",
-                button {
-                    class: "mkv-btn mkv-btn-sm",
-                    onclick: move |_| {
-                        let mut sig = edit;
-                        let at = page_idx.read().clone();
-                        let mut guard = sig.write();
-                        if let EditDocument::Deck(deck) = &mut guard.document {
-                            if !deck.slides.is_empty() {
-                                let src = deck.slides.remove(at);
-                                let target = (at + 1).min(deck.slides.len());
-                                deck.slides.insert(target, src);
-                            }
-                        }
-                        drop(guard);
-                        let mut idx = page_idx;
-                        idx.set(at + 1);
-                    },
-                    "后移一页"
-                }
-                button {
-                    class: "mkv-btn mkv-btn-sm",
-                    onclick: move |_| {
-                        let mut sig = edit;
-                        let at = page_idx.read().clone();
-                        let mut guard = sig.write();
-                        if let EditDocument::Deck(deck) = &mut guard.document {
-                            if at > 0 {
-                                deck_move_slide(deck, at, at - 1);
-                            }
-                        }
-                        drop(guard);
-                        let mut idx = page_idx;
-                        idx.set(at + 1 - 1);
-                    },
-                    "前移一页"
-                }
-                button {
-                    class: "mkv-btn mkv-btn-sm mkv-btn-danger",
-                    onclick: move |_| {
-                        let mut sig = edit;
-                        let at = page_idx.read().clone();
-                        let mut guard = sig.write();
-                        if let EditDocument::Deck(deck) = &mut guard.document {
-                            deck_remove_slide(deck, at);
-                        }
-                        drop(guard);
-                        let mut idx = page_idx;
-                        idx.set(at.saturating_sub(1));
-                    },
-                    "删除本页"
-                }
-            }
-            if let Some(s) = slide {
-                div { class: "mkv-deck-canvas",
-                    for (si, shape) in s.shapes.iter().enumerate() {
-                        div { class: "mkv-deck-shape",
-                            div { class: "mkv-deck-shape-name",
-                                span { "{shape.name}" }
-                                if shape.is_title {
-                                    span { class: "mkv-badge", "标题" }
-                                }
-                            }
-                            textarea {
-                                class: "mkv-deck-text",
-                                rows: "3",
-                                value: "{shape.paragraphs.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join(\"\\n\")}",
-                                oninput: move |e| {
-                                    let text = e.value();
-                                    let mut sig = edit;
-                                    let page = page_idx.read().clone();
-                                    let mut guard = sig.write();
-                                    if let EditDocument::Deck(deck) = &mut guard.document {
-                                        deck_set_shape_text(deck, page, si, &text);
-                                    }
-                                },
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- WordCraft
-
-/// WordCraft：Word 段落编辑器。
-#[component]
-pub fn WordCraftPanel(edit: Signal<EditSession>) -> Element {
-    let doc = word_of(&edit);
-    let paragraphs = doc.paragraphs.clone();
-
+    let session = edit.read().clone();
+    let Some(PluginView::Deck { slides }) = plugin::view(&session).ok() else {
+        return rsx! { div { class: "mkv-muted", "该插件未提供演示视图" } };
+    };
+    let count = slides.len();
     rsx! {
         div { class: "mkv-word",
             div { class: "mkv-word-toolbar",
-                button {
-                    class: "mkv-btn mkv-btn-sm",
-                    onclick: move |_| {
-                        let mut sig = edit;
-                        let mut guard = sig.write();
-                        if let EditDocument::Word(doc) = &mut guard.document {
-                            wordcraft::insert_paragraph(doc, 0, ParaStyle::Normal);
-                        }
-                    },
-                    "开头插入段落"
+                span { class: "mkv-muted", "{count} 页 · 形状文本可直接编辑" }
+            }
+            div { class: "mkv-word-body",
+                for slide in slides.into_iter() {
+                    SlideEditor { edit, slide }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Word 视图
+
+#[component]
+fn ParagraphEditor(
+    edit: Signal<EditSession>,
+    paragraph: ParagraphView,
+    style_options: Vec<String>,
+) -> Element {
+    let mut edit = edit;
+    let index = paragraph.index;
+    let text = paragraph.text;
+    let style = paragraph.style;
+    rsx! {
+        div { class: "mkv-word-para",
+            div { class: "mkv-word-para-tools",
+                span { class: "mkv-muted", "第 {index + 1} 段" }
+                select {
+                    onchange: move |ev| apply(&mut edit, PluginAction::SetParagraphStyle {
+                        index, style: ev.value(),
+                    }),
+                    for opt in style_options.iter() {
+                        option { value: "{opt}", selected: *opt == style, "{opt}" }
+                    }
                 }
                 button {
                     class: "mkv-btn mkv-btn-sm",
-                    onclick: move |_| {
-                        let mut sig = edit;
-                        let mut guard = sig.write();
-                        if let EditDocument::Word(doc) = &mut guard.document {
-                            let at = doc.paragraphs.len();
-                            wordcraft::insert_paragraph(doc, at, ParaStyle::Normal);
-                        }
-                    },
-                    "末尾插入段落"
+                    onclick: move |_| apply(&mut edit, PluginAction::RemoveParagraph { index }),
+                    "删除"
+                }
+            }
+            textarea {
+                class: "mkv-word-text",
+                value: "{text}",
+                onchange: move |ev| apply(&mut edit, PluginAction::SetParagraph {
+                    index, text: ev.value(),
+                }),
+            }
+        }
+    }
+}
+
+/// 文档视图通用面板；样式选项由插件声明，UI 不硬编码样式表。
+#[component]
+pub fn WordCraftPanel(edit: Signal<EditSession>) -> Element {
+    let mut edit = edit;
+    let session = edit.read().clone();
+    let Some(PluginView::Word { paragraphs, style_options }) = plugin::view(&session).ok() else {
+        return rsx! { div { class: "mkv-muted", "该插件未提供文档视图" } };
+    };
+    let at = paragraphs.len();
+    let default_style = style_options.first().cloned().unwrap_or_else(|| "Normal".into());
+    let count = paragraphs.len();
+    rsx! {
+        div { class: "mkv-word",
+            div { class: "mkv-word-toolbar",
+                span { class: "mkv-muted", "{count} 段" }
+                button {
+                    class: "mkv-btn mkv-btn-sm",
+                    onclick: move |_| apply(&mut edit, PluginAction::InsertParagraph {
+                        at, style: default_style.clone(),
+                    }),
+                    "新增段落"
                 }
             }
             div { class: "mkv-word-body",
-                for (i, p) in paragraphs.iter().enumerate() {
-                    div { class: "mkv-word-para",
-                        div { class: "mkv-word-para-tools",
-                            select {
-                                class: "mkv-select",
-                                onchange: move |e| {
-                                    let style = match e.value().as_str() {
-                                        "标题 1" => ParaStyle::Heading1,
-                                        "标题 2" => ParaStyle::Heading2,
-                                        "标题 3" => ParaStyle::Heading3,
-                                        "列表" => ParaStyle::Bullet,
-                                        "引用" => ParaStyle::Quote,
-                                        _ => ParaStyle::Normal,
-                                    };
-                                    let mut sig = edit;
-                                    let mut guard = sig.write();
-                                    if let EditDocument::Word(doc) = &mut guard.document {
-                                        wordcraft::word_set_style_at(doc, i, style);
-                                    }
-                                },
-                                option { value: "正文", selected: p.style == ParaStyle::Normal, "正文" }
-                                option { value: "标题 1", selected: p.style == ParaStyle::Heading1, "标题 1" }
-                                option { value: "标题 2", selected: p.style == ParaStyle::Heading2, "标题 2" }
-                                option { value: "标题 3", selected: p.style == ParaStyle::Heading3, "标题 3" }
-                                option { value: "列表", selected: p.style == ParaStyle::Bullet, "列表" }
-                                option { value: "引用", selected: p.style == ParaStyle::Quote, "引用" }
-                            }
-                            button {
-                                class: "mkv-btn mkv-btn-sm mkv-btn-danger",
-                                onclick: move |_| {
-                                    let mut sig = edit;
-                                    let mut guard = sig.write();
-                                    if let EditDocument::Word(doc) = &mut guard.document {
-                                        wordcraft::remove_paragraph(doc, i);
-                                    }
-                                },
-                                "删除"
-                            }
-                        }
-                        textarea {
-                            class: "mkv-word-text",
-                            rows: "2",
-                            value: "{p.text}",
-                            oninput: move |e| {
-                                let text = e.value();
-                                let mut sig = edit;
-                                let mut guard = sig.write();
-                                if let EditDocument::Word(doc) = &mut guard.document {
-                                    wordcraft::word_set_text_at(doc, i, text);
-                                }
-                            },
-                        }
+                for paragraph in paragraphs.into_iter() {
+                    ParagraphEditor {
+                        edit,
+                        paragraph,
+                        style_options: style_options.clone(),
                     }
                 }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 启动升级提示
+
+/// 应用启动时检测三个上游 Craft 项目是否有新提交，由用户决定是否升级。
+///
+/// Web 只读端 `supports_editor_updates()` 为 false，不发起任何网络探测。
+/// 探测失败 / 离线时得到空计划，横幅不出现，不打断主流程。
+#[component]
+pub fn EditorUpdateBanner(ctx: VaultContext) -> Element {
+    let dismissed = use_signal(|| false);
+    let plan = use_signal(|| None::<Option<UpdatePlan>>);
+
+    use_future(move || async move {
+        let mut signal = plan;
+        if ctx.service.read().supports_editor_updates() {
+            let detected = ctx.service.read().editor_update_plan();
+            signal.set(Some(detected));
+        }
+    });
+
+    if !ctx.service.read().supports_editor_updates() || *dismissed.peek() {
+        return rsx! {};
+    }
+    let Some(Some(p)) = plan.read().clone() else {
+        return rsx! {};
+    };
+    if !p.has_updates() {
+        return rsx! {};
+    }
+    let ids = p.actionable_ids();
+    let ids_upgrade = ids.clone();
+    let ids_skip = ids.clone();
+    let count = ids.len();
+    let names = ids.join(" / ");
+
+    rsx! {
+        div { class: "mkv-update-banner",
+            span { class: "mkv-update-text",
+                "检测到 {count} 个编辑器插件的上游仓库有新提交（{names}）"
+            }
+            button {
+                class: "mkv-btn mkv-btn-sm mkv-btn-primary",
+                onclick: move |_| {
+                    let mut status = ctx.status;
+                    let mut d = dismissed;
+                    match ctx.service.read().decide_editor_update(&UpdateChoice::Upgrade { ids: ids_upgrade.clone() }) {
+                        Ok(n) => status.set(format!(
+                            "已确认升级 {n} 个插件；运行 mkv editors upgrade 完成插件重建后重启生效"
+                        )),
+                        Err(e) => status.set(format!("升级确认失败：{e}")),
+                    }
+                    d.set(true);
+                },
+                "更新"
+            }
+            button {
+                class: "mkv-btn mkv-btn-sm",
+                onclick: move |_| {
+                    let mut status = ctx.status;
+                    let mut d = dismissed;
+                    match ctx.service.read().decide_editor_update(&UpdateChoice::Skip { ids: ids_skip.clone() }) {
+                        Ok(n) => status.set(format!("已跳过 {n} 个上游版本")),
+                        Err(e) => status.set(format!("跳过失败：{e}")),
+                    }
+                    d.set(true);
+                },
+                "跳过此版本"
+            }
+            button {
+                class: "mkv-btn mkv-btn-sm mkv-btn-ghost",
+                onclick: move |_| {
+                    let mut status = ctx.status;
+                    let mut d = dismissed;
+                    let _ = ctx.service.read().decide_editor_update(&UpdateChoice::Defer);
+                    status.set("已暂缓插件升级".to_string());
+                    d.set(true);
+                },
+                "稍后"
             }
         }
     }

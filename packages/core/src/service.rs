@@ -96,6 +96,29 @@ pub trait KnowledgeService: Send + Sync {
     fn save_editor(&self, _session: &crate::editor::EditSession) -> crate::Result<()> {
         Err(crate::Error::Config("当前后端不支持编辑保存".into()))
     }
+
+    /// 已安装的编辑器插件清单（UI / 诊断用）。Web 只读端为空。
+    fn editor_plugins(&self) -> Vec<crate::plugin::PluginDescriptor> {
+        Vec::new()
+    }
+
+    /// 是否支持「启动时检测上游编辑器更新」。Web 只读端为 false。
+    fn supports_editor_updates(&self) -> bool {
+        false
+    }
+
+    /// 启动检测得到的更新计划；`None` 表示未检测或不支持。
+    fn editor_update_plan(&self) -> Option<crate::editor_updates::UpdatePlan> {
+        None
+    }
+
+    /// 应用用户对升级的决定（确认 / 跳过 / 稍后），返回受影响的插件数。
+    fn decide_editor_update(
+        &self,
+        _choice: &crate::editor_updates::UpdateChoice,
+    ) -> crate::Result<usize> {
+        Ok(0)
+    }
 }
 
 /// 空实现（Web 端未接入数据源时的占位）。

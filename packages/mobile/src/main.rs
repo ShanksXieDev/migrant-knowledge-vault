@@ -10,6 +10,10 @@ use mkv_core::native::NativeService;
 use mkv_ui::{AppShell, VaultContext};
 
 fn main() {
+    // 移动端只能用内置编辑器（无法外部唤起），同样需要注入插件。
+    if let Err(e) = mkv_editors::install() {
+        eprintln!("[mkv] 编辑器插件安装失败: {e}");
+    }
     dioxus::launch(App);
 }
 

@@ -3493,6 +3493,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "mkv-core",
+ "mkv-editors",
 ]
 
 [[package]]
@@ -3524,8 +3525,46 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "mkv-core",
+ "mkv-editors",
  "mkv-ui",
  "tokio",
+]
+
+[[package]]
+name = "mkv-editor-deckcraft"
+version = "0.1.0"
+dependencies = [
+ "mkv-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mkv-editor-gridcraft"
+version = "0.1.0"
+dependencies = [
+ "mkv-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mkv-editor-wordcraft"
+version = "0.1.0"
+dependencies = [
+ "mkv-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mkv-editors"
+version = "0.1.0"
+dependencies = [
+ "mkv-core",
+ "mkv-editor-deckcraft",
+ "mkv-editor-gridcraft",
+ "mkv-editor-wordcraft",
 ]
 
 [[package]]
@@ -3534,6 +3573,7 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "mkv-core",
+ "mkv-editors",
  "mkv-ui",
 ]
 

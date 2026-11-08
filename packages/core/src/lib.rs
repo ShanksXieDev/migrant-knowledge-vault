@@ -20,22 +20,23 @@
 //! 运行期不需要分词器。
 
 // ---- 纯 Rust：跨端可用 ----
-pub mod deckcraft;
+// 注意：三个编辑器已从 core 拆到 packages/plugins/ 独立 crate，
+// core 只保留插件契约（plugin）与路由（editor），不链接任何编辑器实现。
 pub mod demo;
 pub mod editor;
+pub mod editor_updates;
 pub mod error;
 pub mod format;
-pub mod gridcraft;
 pub mod locate;
 pub mod ooxml;
 pub mod parse;
+pub mod plugin;
 pub mod prebuilt;
 pub mod refs;
 pub mod scan;
 pub mod service;
 pub mod storage;
 pub mod types;
-pub mod wordcraft;
 pub mod xml;
 
 // ---- 原生能力：仅 native 目标 ----

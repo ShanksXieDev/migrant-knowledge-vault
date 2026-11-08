@@ -7,6 +7,10 @@ members = [
     "packages/desktop",
     "packages/web",
     "packages/mobile",
+    "packages/editors",
+    "packages/plugins/gridcraft",
+    "packages/plugins/deckcraft",
+    "packages/plugins/wordcraft",
 ]
 
 [workspace.package]

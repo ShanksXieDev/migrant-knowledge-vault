@@ -214,6 +214,54 @@ impl KnowledgeService for NativeService {
             .collect();
         crate::refs::build_reference_views(&source, &all)
     }
+
+    fn editor_plugins(&self) -> Vec<crate::plugin::PluginDescriptor> {
+        crate::plugin::registry()
+            .read()
+            .map(|r| r.descriptors())
+            .unwrap_or_default()
+    }
+
+    fn supports_editor_updates(&self) -> bool {
+        true
+    }
+
+    /// 启动时调用一次：读取知识库内的运行时状态，探测三个上游 HEAD 并生成计划。
+    ///
+    /// 探测走 `git ls-remote`，离线 / 超时只会得到空计划，不会阻断应用。
+    fn editor_update_plan(&self) -> Option<crate::editor_updates::UpdatePlan> {
+        let root = std::path::PathBuf::from(self.root());
+        if root.as_os_str().is_empty() {
+            return None;
+        }
+        let lock = crate::editor_updates::load_state(&root);
+        let remote = crate::editor_updates::detect_remote_revisions(&lock);
+        Some(crate::editor_updates::plan_updates(&lock, &remote))
+    }
+
+    /// 持久化用户的升级 / 跳过决定，写入 `.kbindex/editors.json`。
+    fn decide_editor_update(
+        &self,
+        choice: &crate::editor_updates::UpdateChoice,
+    ) -> Result<usize> {
+        use crate::editor_updates::{apply_choice, load_state, plan_updates, save_state};
+        let root = std::path::PathBuf::from(self.root());
+        if root.as_os_str().is_empty() {
+            return Err(crate::Error::Config("知识库未打开，无法保存插件升级决定".into()));
+        }
+        let mut lock = load_state(&root);
+        let remote = crate::editor_updates::detect_remote_revisions(&lock);
+        let plan = plan_updates(&lock, &remote);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| format!("unix:{}", d.as_secs()))
+            .unwrap_or_else(|_| "unix:0".to_string());
+        let count = apply_choice(&mut lock, &plan, choice, &now);
+        if count > 0 {
+            save_state(&root, &lock)?;
+        }
+        Ok(count)
+    }
 }
 
 /// 以只读方式访问已注册的知识库；未打开时返回 None。
