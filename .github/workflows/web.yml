@@ -58,23 +58,74 @@ jobs:
       - name: 安装 dx（官方预编译二进制 + sha256 校验）
         run: |
           set -euo pipefail
-          BASE="https://github.com/DioxusLabs/dioxus/releases/download/v${DX_VERSION}"
           ASSET="dx-x86_64-unknown-linux-gnu.tar.gz"
-          curl -fsSL -A "mkv-ci" "$BASE/$ASSET" -o dx.tar.gz
-          curl -fsSL -A "mkv-ci" "$BASE/dx-x86_64-unknown-linux-gnu.sha256" -o dx.sha256
+          SHA_ASSET="dx-x86_64-unknown-linux-gnu.sha256"
+          BASE="https://github.com/DioxusLabs/dioxus/releases/download/v${DX_VERSION}"
+          REPO_API="https://api.github.com/repos/DioxusLabs/dioxus"
+
+          # 通道 A：releases/download 直链。通道 B：GitHub API 资产（按 asset id）。
+          # 为什么不只留 A：release 直链走 objects.githubusercontent.com 的 CDN，
+          # 在代理或网络抖动下会返回 504（run #13 就栽在这里，且整条流水线被跳过）；
+          # 而 api.github.com 走独立链路，实测稳定返回 200 + 完整 33MB 资产。
+          # 两个通道的 sha256 校验完全一致，安全性不降低。
+          download_with_retry() {
+            # $1=输出文件 $2=尝试次数上限
+            local out="$1" tries="$2" i=1
+            while [ "$i" -le "$tries" ]; do
+              echo "  尝试 $i/$tries：$3"
+              if eval "$3"; then
+                return 0
+              fi
+              echo "  第 $i 次失败，5 秒后重试"
+              i=$((i + 1))
+              sleep 5
+            done
+            return 1
+          }
+
+          fetch_release() {
+            # 通道 A
+            curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors \
+              -A "mkv-ci" "$BASE/$1" -o "$2"
+          }
+
+          fetch_api() {
+            # 通道 B：先取 release 元数据拿 asset id，再用 octet-stream 下载
+            local name="$1" out="$2" id
+            id="$(curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors \
+              -A "mkv-ci" "$REPO_API/releases/tags/v${DX_VERSION}" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(a['id'] for a in d['assets'] if a['name']=='$name'))")"
+            [ -n "$id" ] || return 1
+            curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors \
+              -H "Accept: application/octet-stream" -A "mkv-ci" \
+              "$REPO_API/releases/assets/$id" -o "$out"
+          }
+
+          echo "下载 $ASSET（优先 release 直链，失败回退 API 资产通道）"
+          download_with_retry dx.tar.gz 3 \
+            'fetch_release "$ASSET" dx.tar.gz || fetch_api "$ASSET" dx.tar.gz'
+
+          echo "下载 $SHA_ASSET"
+          download_with_retry dx.sha256 3 \
+            'fetch_release "$SHA_ASSET" dx.sha256 || fetch_api "$SHA_ASSET" dx.sha256'
+
           # 官方 .sha256 同时列了 tar.gz 与 zip 两行；必须按文件名只取目标那一行，
           # 否则 EXPECTED 会变成两行拼接的字符串，与实际 hash 永不相等（首跑即栽在这里）。
           EXPECTED="$(awk -v f="$ASSET" '$2 == f { print $1 }' dx.sha256)"
-          [ -n "$EXPECTED" ] || { echo "sha256 清单中没有 $ASSET"; cat dx.sha256; exit 1; }
+          [ -n "$EXPECTED" ] || { echo "::error::sha256 清单中没有 $ASSET"; cat dx.sha256; exit 1; }
           ACTUAL="$(sha256sum dx.tar.gz | cut -d' ' -f1)"
           echo "expected=$EXPECTED"
           echo "actual  =$ACTUAL"
-          [ "$EXPECTED" = "$ACTUAL" ] || { echo "dx sha256 校验失败"; exit 1; }
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::dx sha256 校验失败（expected=$EXPECTED actual=$ACTUAL）"
+            exit 1
+          fi
           mkdir -p dx-release
           tar -xzf dx.tar.gz -C dx-release
           DX_BIN="$(find dx-release -type f -name dx | head -n1)"
-          [ -n "$DX_BIN" ] || { echo "压缩包中未找到 dx"; tar -tzf dx.tar.gz; exit 1; }
+          [ -n "$DX_BIN" ] || { echo "::error::压缩包中未找到 dx"; tar -tzf dx.tar.gz; exit 1; }
           chmod +x "$DX_BIN"
+          mkdir -p "$HOME/.cargo/bin"
           install -m 0755 "$DX_BIN" "$HOME/.cargo/bin/dx"
           dx --version
 
