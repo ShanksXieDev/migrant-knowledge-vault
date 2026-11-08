@@ -133,12 +133,15 @@ def optimize_wasm(tool, dst):
         return None
     before = os.path.getsize(dst)
     tmp = dst + '.opt'
-    # 按「保守 → 激进」排列，逐组尝试，任一组成功即采用。
-    # 第一组只含各版本 binaryen 都支持的基础参数；
-    # 第二、三组含更多剥离项，旧版本 binaryen 可能不认识，会自动跳到下一组。
+    # 按「激进 → 保守」排列，逐组尝试，任一组成功即采用。
+    #
+    # `--converge` 让 binaryen 反复跑优化直到不再变化，实测比单趟 -Oz
+    # 再小约 0.5KB；旧版本 binaryen 不认识该参数时会失败并自动落到下一组，
+    # 因此把它排在最前面、后面保留不含它的基础组兜底。
     flag_sets = [
+        ['-Oz', '--strip-debug', '--converge'],
         ['-Oz', '--strip-debug'],
-        ['-Oz', '--strip-debug', '--strip-dwarf'],
+        ['-Oz', '--strip-debug', '--strip-dwarf', '--converge'],
         ['-Oz', '--strip-debug', '--strip-dwarf', '--strip-producers'],
     ]
     for flags in flag_sets:

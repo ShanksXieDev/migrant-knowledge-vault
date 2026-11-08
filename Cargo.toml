@@ -61,10 +61,36 @@ dioxus = { version = "0.7", default-features = false }
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+# fat LTO：跨 crate 内联与去重，实测把 wasm 从 891KB 压到 693KB
+# （单靠 opt-level="z" 只能到 822KB）。桌面端同样受益（跨 crate 内联更多，
+# 通常更快），代价是编译时间从约 17s 增加到约 45s。
+lto = "fat"
 codegen-units = 1
 # 不要开 strip：wasm32 目标下较新的 rustc 会把 __wasm_bindgen_unstable /
 # target_features 自定义段一并剥掉，wasm-bindgen 随后报
 # "failed to read wasm-bindgen data"，release 站点直接构建失败（Linux CI 实测）。
 # 体积优化交给 dx 的 wasm-opt —— 它作用于 wasm-bindgen 输出之后，不会破坏这些段。
 strip = false
+
+# 仅对本项目自有 crate 启用体积优化（依赖 crate 保持 opt-level=3，
+# 避免拖慢 tantivy / sqlite 的检索热路径）。
+#
+# 为什么需要它：rustc 的内联决策在 wasm-opt 之前就已固化，binaryen 只能
+# 删除代码、无法「拆开」已被内联的函数，因此 Rust 侧的体积优化是必要的。
+# 实测（同一份代码、同一工具链）：
+#   opt-level=3            → 891,480 B
+#   + opt-level="z"（自有）→ 822,067 B
+#   + lto="fat"            → 693,304 B
+#
+# 影响面：本项目的 crate 不含检索热路径（热路径在 tantivy / sqlite 里，
+# 它们仍是 opt-level=3）。F-12 正则引擎是逐字符解释器，实测吞吐下降
+# 6%~22%（多数场景 8%~10%）：线性类 19.7→17.3、词类 7.7→7.0、
+# 字符类 10.5→9.9、惰性量词 8.6→7.9、嵌套重复 11.7→9.1 M字符/s。
+# 绝对速度仍远超交互需求（40KB 文档单次扫描约 4ms），换取 198KB 体积，
+# 值得。
+[profile.release.package.mkv-core]
+opt-level = "z"
+[profile.release.package.mkv-ui]
+opt-level = "z"
+[profile.release.package.mkv-web]
+opt-level = "z"
