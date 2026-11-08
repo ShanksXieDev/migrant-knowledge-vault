@@ -7,13 +7,16 @@
 //! - `content` : 正文（mkv_jieba 分词）
 //! - `format`  : 格式（raw）
 
+use std::collections::BTreeMap;
+
 use crate::error::Result;
 use crate::tokenizer::{JiebaTokenizer, TOKENIZER_NAME};
 use crate::types::SearchHit;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::{
-    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value,
+    Field, FieldEntry, IndexRecordOption, NumericOptions, Schema, TextFieldIndexing, TextOptions,
+    Value,
 };
 use tantivy::{Index, IndexWriter, ReloadPolicy, TantivyDocument, Term, doc};
 
@@ -24,6 +27,10 @@ pub struct IndexDocument {
     pub title: String,
     pub content: String,
     pub format: String,
+    /// 最后修改时间（Unix 秒）。F-07 时间窗过滤用。
+    pub modified_at: u64,
+    /// 文档标签。F-07 标签过滤用。
+    pub tags: Vec<String>,
 }
 
 /// 检索后端抽象（Web 端可换用预构建只读索引实现）。
@@ -45,6 +52,10 @@ pub struct TantivyIndex {
     title_field: Field,
     content_field: Field,
     format_field: Field,
+    /// 修改时间（u64，raw）。F-07 时间窗过滤用。
+    modified_field: Field,
+    /// 标签（raw，多值）。F-07 标签过滤用。
+    tag_field: Field,
     /// 索引目录（`.kbindex/`），用于持久化领域词典。
     kbindex_dir: std::path::PathBuf,
 }
@@ -86,11 +97,26 @@ impl TantivyIndex {
         let path_field = builder.add_text_field("path", raw.clone());
         let title_field = builder.add_text_field("title", jieba_opts.clone());
         let content_field = builder.add_text_field("content", jieba_opts);
-        let format_field = builder.add_text_field("format", raw);
+        let format_field = builder.add_text_field("format", raw.clone());
+        // F-07：修改时间与标签进索引，使过滤能在检索层完成，
+        // 与 Web 预构建索引的「结果上过滤」语义保持一致。
+        let modified_field = builder.add_u64_field("modified", NumericOptions::default().set_stored());
+        let tag_field = builder.add_text_field("tag", raw);
         let schema = builder.build();
 
+        // schema 迁移：磁盘上的旧索引带着**旧 schema**（字段序号不同），
+        // 直接 open 会让本文件的 field 句柄指向不存在的字段，
+        // 表现为查询时 panic 或字段取空值，而不是清晰的报错。
+        // 因此这里比对 schema 一致性：不一致就清空索引目录重建。
+        // 代价是一次全量重建（reindex 会重新扫盘），换来行为可预期。
         let index = match Index::open_in_dir(&dir) {
-            Ok(idx) => idx,
+            Ok(idx) if schema_matches(&idx.schema(), &schema) => idx,
+            Ok(_) => {
+                eprintln!("[mkv] 索引 schema 已变更，重建搜索索引目录");
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::create_dir_all(&dir).map_err(|e| crate::Error::io(dir.clone(), e))?;
+                Index::create_in_dir(&dir, schema)?
+            }
             Err(_) => Index::create_in_dir(&dir, schema)?,
         };
 
@@ -106,6 +132,8 @@ impl TantivyIndex {
             title_field,
             content_field,
             format_field,
+            modified_field,
+            tag_field,
             kbindex_dir: kbindex.to_path_buf(),
         };
 
@@ -178,12 +206,16 @@ impl SearchIndex for TantivyIndex {
         // 先删后加，保证同一 path 只有一份文档
         self.delete_by_path_term(&doc.path)?;
 
-        let tantivy_doc = doc!(
+        let mut tantivy_doc = doc!(
             self.path_field => doc.path.clone(),
             self.title_field => doc.title.clone(),
             self.content_field => doc.content.clone(),
             self.format_field => doc.format.clone(),
+            self.modified_field => doc.modified_at,
         );
+        for tag in &doc.tags {
+            tantivy_doc.add_field_value(self.tag_field, tag.as_str());
+        }
         let writer = self.writer()?;
         writer.add_document(tantivy_doc)?;
         Ok(())
@@ -256,6 +288,14 @@ impl SearchIndex for TantivyIndex {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string();
+            let modified_at = tantivy_doc
+                .get_first(self.modified_field)
+                .and_then(|v| v.as_u64())
+                .unwrap_or_default();
+            let tags: Vec<String> = tantivy_doc
+                .get_all(self.tag_field)
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
 
             hits.push(SearchHit {
                 path,
@@ -263,6 +303,8 @@ impl SearchIndex for TantivyIndex {
                 format,
                 score,
                 snippet: make_snippet(&content, 160),
+                modified_at,
+                tags,
             });
         }
         Ok(hits)
@@ -273,6 +315,36 @@ impl SearchIndex for TantivyIndex {
         let searcher = reader.searcher();
         Ok(searcher.num_docs())
     }
+}
+
+/// 比对磁盘上的 schema 与期望 schema 是否一致。
+///
+/// 逐字段比对「字段名 + 类型 + 分词器」，而不是比较序列化结果：
+/// 序列化格式随 tantivy 版本变化，会造成无谓的重建。
+///
+/// Tantivy 0.27 的 `FieldEntry` 派生了 `PartialEq`，其内部 `FieldType::Str(TextOptions)`
+/// 本身就携带分词器与 stored/indexed 选项，因此直接比较 `FieldEntry` 即可覆盖
+/// 「字段名 + 类型 + 分词器」三要素，无需（也无法）单独取 tokenizer。
+fn schema_matches(actual: &Schema, expected: &Schema) -> bool {
+    let actual_entries: BTreeMap<&str, &FieldEntry> =
+        actual.fields().map(|(_, entry)| (entry.name(), entry)).collect();
+    let expected_entries: BTreeMap<&str, &FieldEntry> =
+        expected.fields().map(|(_, entry)| (entry.name(), entry)).collect();
+
+    if actual_entries.len() != expected_entries.len() {
+        return false;
+    }
+    for (name, exp_entry) in &expected_entries {
+        match actual_entries.get(name) {
+            Some(act_entry) => {
+                if *exp_entry != *act_entry {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+    true
 }
 
 /// 生成摘要片段。
@@ -314,6 +386,8 @@ mod tests {
             title: "模具分析".into(),
             content: "本文档介绍 Moldflow 模流分析的基本流程与参数设置。".into(),
             format: "Markdown".into(),
+            modified_at: 1,
+            tags: vec!["模具".into()],
         })
         .unwrap();
         idx.commit().unwrap();
@@ -337,6 +411,8 @@ mod tests {
             title: "旧标题".into(),
             content: "旧内容".into(),
             format: "Markdown".into(),
+            modified_at: 1,
+            tags: Vec::new(),
         })
         .unwrap();
         idx.upsert(&IndexDocument {
@@ -344,6 +420,8 @@ mod tests {
             title: "新标题".into(),
             content: "新内容".into(),
             format: "Markdown".into(),
+            modified_at: 2,
+            tags: Vec::new(),
         })
         .unwrap();
         idx.commit().unwrap();

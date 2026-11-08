@@ -71,6 +71,11 @@ impl MetaStore {
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS ref_snapshots (
+                key  TEXT PRIMARY KEY,
+                text TEXT NOT NULL
+            );
             "#,
         )?;
         Ok(())
@@ -275,6 +280,51 @@ impl MetaStore {
             Some(row) => Ok(Some(row?)),
             None => Ok(None),
         }
+    }
+
+    /// 写入引用源片段快照（F-06 进阶：源变更差异高亮）。
+    ///
+    /// 快照记录的是「上次看到的源片段原文」，
+    /// 之后源文件被修改时即可与当前内容做行级差异比对。
+    pub fn set_ref_snapshot(&mut self, key: &str, text: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO ref_snapshots (key, text) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET text = excluded.text",
+            params![key, text],
+        )?;
+        Ok(())
+    }
+
+    /// 读取引用源片段快照。
+    pub fn get_ref_snapshot(&self, key: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT text FROM ref_snapshots WHERE key = ?1")?;
+        let mut rows = stmt.query_map(params![key], |row| row.get::<_, String>(0))?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 列出全部引用快照。
+    pub fn list_ref_snapshots(&self) -> Result<std::collections::HashMap<String, String>> {
+        let mut stmt = self.conn.prepare("SELECT key, text FROM ref_snapshots")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut out = std::collections::HashMap::new();
+        for r in rows {
+            let (k, v) = r?;
+            out.insert(k, v);
+        }
+        Ok(out)
+    }
+
+    /// 清空全部引用快照（重建基线时用）。
+    pub fn clear_ref_snapshots(&mut self) -> Result<()> {
+        self.conn.execute("DELETE FROM ref_snapshots", [])?;
+        Ok(())
     }
 }
 

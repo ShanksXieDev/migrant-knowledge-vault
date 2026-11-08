@@ -43,6 +43,8 @@ fn index(note: &str, with_refs: bool) -> PrebuiltIndex {
                 text: EXCEL.into(),
                 segments: Vec::new(),
                 refs: Vec::new(),
+                tags: Vec::new(),
+                nodes: Vec::new(),
             },
             PrebuiltDoc {
                 path: "note.md".into(),
@@ -53,10 +55,13 @@ fn index(note: &str, with_refs: bool) -> PrebuiltIndex {
                 text: note.into(),
                 segments: Vec::new(),
                 refs,
+                tags: Vec::new(),
+                nodes: Vec::new(),
             },
         ],
         links: Vec::new(),
         postings: Vec::new(),
+        graph_positions: Vec::new(),
     }
 }
 

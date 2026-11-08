@@ -30,9 +30,12 @@ fn readonly_ctx() -> VaultContext {
             text: "零件号 / 模具编号".into(),
             segments: Vec::new(),
             refs: Vec::new(),
+            tags: Vec::new(),
+            nodes: Vec::new(),
         }],
         links: Vec::new(),
         postings: Vec::new(),
+        graph_positions: Vec::new(),
     };
     let ctx = VaultContext::with_service(Box::new(PrebuiltService::new(index)));
     let mut current_doc = ctx.current_doc;

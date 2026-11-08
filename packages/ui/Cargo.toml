@@ -10,7 +10,10 @@ description = "Migrant Knowledge Vault 共享 UI 组件（Web / Desktop / Mobile
 [dependencies]
 # 仅使用 core 的纯 Rust 部分（types / service / format），保证 wasm32 可编译
 mkv-core = { workspace = true, default-features = false }
-dioxus = { workspace = true, features = ["launch", "macro", "signals", "hooks", "html", "router"] }
+# 不启用 "router"：本项目是单页只读/桌面应用，没有路由。
+# 启用它会拖进 dioxus-router → url → idna（含大 Unicode 表），
+# 而代码里零引用——实测是 wasm 体积的无谓大头。
+dioxus = { workspace = true, features = ["launch", "macro", "signals", "hooks", "html"] }
 serde.workspace = true
 serde_json.workspace = true
 

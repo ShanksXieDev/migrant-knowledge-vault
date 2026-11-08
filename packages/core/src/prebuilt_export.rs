@@ -17,6 +17,14 @@ use crate::prebuilt::{Posting, PrebuiltDoc, PrebuiltIndex, PREBUILT_SCHEMA_VERSI
 use crate::tokenizer::JiebaTokenizer;
 use crate::types::LinkRecord;
 
+/// 取路径中的目录部分（根目录文档返回空串）。
+fn dir_of(path: &str) -> String {
+    match path.rfind('/') {
+        Some(idx) => path[..idx].to_string(),
+        None => String::new(),
+    }
+}
+
 /// 从已建立的 Vault 生成预构建索引产物。
 pub fn build_index(
     docs: &[crate::types::DocumentRecord],
@@ -79,6 +87,16 @@ pub fn build_index(
         })
         .collect();
 
+    // F-11：抽取流程图节点清单。节点命中优先于片段命中，
+    // 因此 `@流程.drawio#node-a` 能定位到具体图形节点而不是「第 N 个节点」。
+    // 需要读原始字节（.drawio 的 XML / .vsdx 的 zip），因此走本地存储。
+    let storage = crate::storage::FsStorage::new(root);
+    let node_targets: Vec<(String, crate::format::Format)> = all_docs
+        .iter()
+        .map(|(p, _, f)| (p.clone(), *f))
+        .collect();
+    let node_map = crate::diagram::build_node_map(&storage, &node_targets);
+
     let prebuilt_docs: Vec<PrebuiltDoc> = docs
         .iter()
         .map(|d| {
@@ -94,20 +112,60 @@ pub fn build_index(
                 // 精确定位：按格式把原文切成带标签的片段，随索引一起打包。
                 segments: crate::locate::segment_text(&text, format),
                 // F-06：构建期把每条引用的源片段快照一起打包，Web 只读端零网络即可显示。
-                refs: crate::refs::build_reference_views(&text, &all_docs),
+                refs: crate::refs::build_reference_views_with_nodes(&text, &all_docs, &node_map),
+                // F-07：标签随索引一起打包，Web 端过滤面板无需额外请求。
+                tags: crate::tags::extract_tags(&text, &dir_of(&d.path), format),
+                // F-11：流程图节点清单随索引一起打包，Web 端节点级引用可用。
+                nodes: node_map.get(&d.path).cloned().unwrap_or_default(),
                 text,
             }
         })
         .collect();
 
-    Ok(PrebuiltIndex {
+    let mut index = PrebuiltIndex {
         schema_version: PREBUILT_SCHEMA_VERSION,
         generated_at: crate::meta::now_secs(),
         root: root.to_string(),
         docs: prebuilt_docs,
         links: links.to_vec(),
         postings: posting_list,
-    })
+        graph_positions: Vec::new(),
+    };
+    // F-10：图谱坐标在构建期算好，随产物发布；Web 端运行期只查表。
+    attach_graph_positions(&mut index);
+    Ok(index)
+}
+
+/// 计算图谱坐标并写回索引产物（仅 native，构建期）。
+///
+/// 力导向布局引擎只在 native 侧参与编译，因此坐标必须**在构建期**算好：
+/// 随产物一起发布的坐标让 Web（wasm32）端运行期零迭代渲染图谱。
+///
+/// 坐标按文档路径索引，与节点下标无关：
+/// 这样即使产物里的文档集合发生变化（远端热替换），
+/// 也只是个别节点缺坐标、单独退回环形布局，不会整体错位。
+fn attach_graph_positions(index: &mut PrebuiltIndex) {
+    let nodes: Vec<(String, String)> = index
+        .docs
+        .iter()
+        .map(|d| (d.path.clone(), d.title.clone()))
+        .collect();
+    let links: Vec<(String, String)> = index
+        .links
+        .iter()
+        .filter(|l| !l.to_path.is_empty())
+        .map(|l| (l.from_path.clone(), l.to_path.clone()))
+        .collect();
+    let snapshot = crate::locate::build_graph_snapshot(&nodes, &links);
+    index.graph_positions = snapshot
+        .nodes
+        .iter()
+        .map(|n| crate::locate::GraphPosition {
+            path: n.path.clone(),
+            x: n.x,
+            y: n.y,
+        })
+        .collect();
 }
 
 #[cfg(test)]
@@ -186,5 +244,58 @@ mod tests {
         assert!(segs[0].label.contains("1") && segs[1].label.contains("2"));
         let joined: String = segs.iter().map(|s| s.text.as_str()).collect();
         assert_eq!(joined, text, "导出片段拼接必须无损");
+    }
+
+    #[test]
+    fn exports_precomputed_graph_positions() {
+        // F-10：图谱坐标在构建期算好并随产物发布，
+        // Web（wasm32）端运行期只查表、不再跑 240 轮迭代。
+        let docs = vec![
+            crate::types::DocumentRecord {
+                path: "a.md".into(),
+                title: "甲".into(),
+                format: "Markdown".into(),
+                size: 10,
+                modified_at: 1,
+                content_hash: String::new(),
+            },
+            crate::types::DocumentRecord {
+                path: "b.md".into(),
+                title: "乙".into(),
+                format: "Markdown".into(),
+                size: 10,
+                modified_at: 1,
+                content_hash: String::new(),
+            },
+        ];
+        let mut texts = HashMap::new();
+        texts.insert("a.md".to_string(), "模流分析入门".to_string());
+        texts.insert("b.md".to_string(), "工艺参数基线".to_string());
+        let links = vec![crate::types::LinkRecord {
+            from_path: "a.md".into(),
+            to_path: "b.md".into(),
+            target: "基线".into(),
+            granularity: "块级".into(),
+        }];
+
+        let idx = build_index(&docs, &texts, &links, None, "测试库").unwrap();
+        assert_eq!(
+            idx.graph_positions.len(),
+            2,
+            "每个文档节点都应带一条预计算坐标，实际 {:?}",
+            idx.graph_positions
+        );
+        for p in &idx.graph_positions {
+            assert!(p.x.is_finite() && p.y.is_finite(), "{} 坐标非法", p.path);
+            assert!((0.0..=crate::locate::GRAPH_CANVAS_WIDTH).contains(&p.x));
+            assert!((0.0..=crate::locate::GRAPH_CANVAS_HEIGHT).contains(&p.y));
+        }
+
+        // 产物序列化 → 重新解析后坐标仍在（远端热替换拿到同一份产物也一致）。
+        let back = crate::prebuilt::PrebuiltIndex::from_json(&idx.to_json().unwrap()).unwrap();
+        assert_eq!(back.graph_positions, idx.graph_positions);
+        let g = back.graph_snapshot();
+        assert_eq!(g.nodes.len(), 2);
+        assert_eq!(g.edges.len(), 1);
     }
 }

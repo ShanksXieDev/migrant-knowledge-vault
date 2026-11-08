@@ -236,6 +236,72 @@ pub trait EditorPlugin: Send + Sync {
     /// 序列化回原生文件。**必须**以 `original` 为基底做外科改写，
     /// 未编辑的部件字节级原样保留（README §9.2）。
     fn serialize(&self, doc: &PluginDocument, original: &[u8]) -> Result<Vec<u8>>;
+
+    /// 该插件当前绑定的后端类型。
+    ///
+    /// 默认 `builtin`：本项目自研的外科手术实现。
+    /// 进程外后端的插件覆写本方法返回 `external`，
+    /// 使 UI 能如实显示「当前用的是上游进程」。
+    fn backend_kind(&self) -> crate::backend::BackendKind {
+        crate::backend::BackendKind::Builtin
+    }
+}
+
+// ---------------------------------------------------------------- 进程外插件
+
+/// 把一个 [`crate::backend::PluginBackend`] 适配成 [`EditorPlugin`]。
+///
+/// 这是架构闭环的接合点：
+/// - 上游进程只实现「打开 / 视图 / 动作 / 序列化」四类操作；
+/// - 本适配器补上 `EditorPlugin` 要求的「自带状态序列化」语义——
+///   实际上状态始终留在宿主的 [`PluginDocument`] 里，
+///   进程外后端不需要自己实现状态编解码。
+///
+/// 因此上游 MCP server 只需实现 [`crate::backend::methods`] 里约定的四个方法，
+/// 就能被本项目当作内置编辑器使用。
+pub struct BackendPlugin {
+    descriptor: PluginDescriptor,
+    backend: Arc<dyn crate::backend::PluginBackend>,
+}
+
+impl BackendPlugin {
+    /// 用后端构造插件。
+    pub fn new(
+        descriptor: PluginDescriptor,
+        backend: Arc<dyn crate::backend::PluginBackend>,
+    ) -> Self {
+        Self { descriptor, backend }
+    }
+}
+
+impl EditorPlugin for BackendPlugin {
+    fn descriptor(&self) -> PluginDescriptor {
+        self.descriptor.clone()
+    }
+
+    fn supports(&self, format: Format) -> bool {
+        self.backend.supports(format)
+    }
+
+    fn open(&self, bytes: &[u8]) -> Result<PluginDocument> {
+        self.backend.open(bytes)
+    }
+
+    fn view(&self, doc: &PluginDocument) -> Result<PluginView> {
+        self.backend.view(doc)
+    }
+
+    fn apply(&self, doc: &mut PluginDocument, action: &PluginAction) -> Result<()> {
+        self.backend.apply(doc, action)
+    }
+
+    fn serialize(&self, doc: &PluginDocument, original: &[u8]) -> Result<Vec<u8>> {
+        self.backend.serialize(doc, original)
+    }
+
+    fn backend_kind(&self) -> crate::backend::BackendKind {
+        self.backend.kind()
+    }
 }
 
 // ---------------------------------------------------------------- 注册表

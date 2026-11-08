@@ -1,6 +1,7 @@
 {
   "contract_version": 1,
   "_comment": "三个上游 Craft 项目的构建期基线 rev。应用启动时检测远端 HEAD，用户确认后写入知识库 .kbindex/editors.json；代码重建由 scripts/sync-editors.sh 完成。",
+  "_backend_comment": "backend 段描述每个插件的**后端选择**。builtin = 本项目自研的外科手术实现（始终可用）；external = 进程外上游 MCP 实现（需安装上游 CLI）。reason 记录为什么这样选，避免后人重复调研（2026-11-08 实地核对结论：gridcraft-xlsx / wordcraft-docx 未发布到 crates.io，deckcraft-pptx 落后两周，且三者均为全量重写，与本项目的包级外科手术写回策略冲突，故采用进程外后端而非链接上游 crate）。",
   "plugins": [
     {
       "id": "gridcraft",
@@ -22,6 +23,23 @@
       "branch": "main",
       "pinned_rev": "4afff61f10978d885cd80cb38034e797304ae33d",
       "contract_version": 1
+    }
+  ],
+  "backends": [
+    {
+      "id": "gridcraft",
+      "kind": "builtin",
+      "reason": "默认使用本项目自研的外科手术实现；上游 gridcraft-mcp 可用时可切换为 external。"
+    },
+    {
+      "id": "deckcraft",
+      "kind": "builtin",
+      "reason": "默认使用本项目自研的外科手术实现；上游 deckcraft-mcp 可用时可切换为 external。"
+    },
+    {
+      "id": "wordcraft",
+      "kind": "builtin",
+      "reason": "默认使用本项目自研的外科手术实现；上游 wordcraft-mcp 可用时可切换为 external。"
     }
   ],
   "skipped_revisions": [],

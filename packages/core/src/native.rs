@@ -8,7 +8,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::error::Result;
 use crate::service::KnowledgeService;
-use crate::types::{LinkRecord, SearchHit};
+use crate::types::{LinkRecord, ReferenceTarget, SearchHit};
 use crate::vault::Vault;
 
 fn slot() -> &'static Mutex<Option<Vault>> {
@@ -126,6 +126,25 @@ impl KnowledgeService for NativeService {
         with(|v| v.search(query, limit).unwrap_or_default()).unwrap_or_default()
     }
 
+    fn search_query(&self, query: &crate::query::SearchQuery) -> Vec<SearchHit> {
+        with(|v| v.search_query(query).unwrap_or_default()).unwrap_or_default()
+    }
+
+    fn validate_query(&self, query: &crate::query::SearchQuery) -> Option<String> {
+        if query.mode != crate::query::QueryMode::Regex {
+            return None;
+        }
+        crate::regex::Regex::new(&query.text).err()
+    }
+
+    fn tags_of(&self, rel_path: &str) -> Vec<String> {
+        with(|v| v.tags_of(rel_path)).unwrap_or_default()
+    }
+
+    fn all_tags(&self) -> Vec<(String, usize)> {
+        with(|v| v.all_tags()).unwrap_or_default()
+    }
+
     fn read_document(&self, rel_path: &str) -> Option<String> {
         with(|v| v.read_document(rel_path).ok()).flatten()
     }
@@ -197,22 +216,40 @@ impl KnowledgeService for NativeService {
     }
 
     fn references(&self, rel_path: &str) -> Vec<crate::refs::ReferenceView> {
-        let Some(source) = self.read_document(rel_path) else {
-            return Vec::new();
-        };
-        // 先取全库清单再逐篇读正文，避免嵌套持有全局 Vault 锁。
-        // 每次调用都重新读取源文件，因此源更新后卡片内容会随之刷新。
-        let docs = self.documents();
-        let all: Vec<(String, String, crate::format::Format)> = docs
-            .iter()
-            .filter_map(|d| {
-                let text = self.read_document(&d.path)?;
-                let format = crate::format::Format::from_path(std::path::Path::new(&d.path))
-                    .unwrap_or(crate::format::Format::Markdown);
-                Some((d.path.clone(), text, format))
-            })
-            .collect();
-        crate::refs::build_reference_views(&source, &all)
+        // F-06 + F-11 节点定位 + F-06 进阶源变更差异，统一由 Vault 负责：
+        // 它同时掌握正文、流程图节点清单与快照基线。
+        with(|v| v.references(rel_path).unwrap_or_default()).unwrap_or_default()
+    }
+
+    /// 可作为引用目标的文档及其选择器候选（F-06 插入引用入口）。
+    ///
+    /// **代价**：本方法会读取全部文档的原文并做片段切分，
+    /// 因此只应在用户打开「插入引用」面板时按需调用，绝不能放进渲染热路径。
+    ///
+    /// 读取用 [`Vault::read_document`]（原始字节的宽松 UTF-8），
+    /// 与 [`Vault::references`] 解析目标片段时用的是同一份文本，
+    /// 这样 UI 里选到的候选序号与真正解析时命中的片段才对得上。
+    fn reference_targets(&self) -> Vec<ReferenceTarget> {
+        with(|v| {
+            v.documents()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|doc| {
+                    // 格式认不出来的文档（后缀未知）没有片段语义，跳过。
+                    let format = crate::format::Format::from_path(std::path::Path::new(&doc.path))?;
+                    // 读失败（文件已删 / 权限问题）只跳过这一篇，不影响其它文档。
+                    let text = v.read_document(&doc.path).ok()?;
+                    let segments = crate::locate::segment_text(&text, format);
+                    let candidates = crate::refs::selector_candidates(&segments);
+                    Some(ReferenceTarget {
+                        path: doc.path.clone(),
+                        title: doc.title.clone(),
+                        candidates,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
     }
 
     fn editor_plugins(&self) -> Vec<crate::plugin::PluginDescriptor> {

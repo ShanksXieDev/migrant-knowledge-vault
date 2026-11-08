@@ -26,6 +26,8 @@ use mkv_core::editor_updates::{UpdateChoice, UpdatePlan};
 use mkv_core::plugin::{
     self, CellView, ParagraphView, PluginAction, PluginView, ShapeView, SlideView,
 };
+use mkv_core::refs::format_reference_token;
+use mkv_core::types::ReferenceTarget;
 
 use crate::VaultContext;
 
@@ -37,10 +39,135 @@ fn apply(edit: &mut Signal<EditSession>, action: PluginAction) {
     }
 }
 
+// ------------------------------------------------- 插入引用（F-06 进阶项①）
+
+/// 当前选中的「插入引用」位置。
+///
+/// 索引语义直接沿用既有插件动作，UI 不另造一套：
+/// - 表格：工作表序号 + 行 + 列 → [`PluginAction::SetCell`]；
+/// - 演示：页序号 + 页内形状序号 → [`PluginAction::SetShapeText`]；
+/// - 文档：段落序号 → [`PluginAction::SetParagraph`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InsertTarget {
+    /// 表格单元格。
+    Grid { sheet: usize, row: usize, col: usize },
+    /// 幻灯片里的形状。
+    Deck { slide: usize, shape: usize },
+    /// 文档段落。
+    Word { paragraph: usize },
+}
+
+impl InsertTarget {
+    /// 位置的人话描述（状态栏提示用）。
+    pub fn describe(&self) -> String {
+        match *self {
+            InsertTarget::Grid { sheet, row, col } => {
+                format!("第 {} 个工作表 · 单元格 R{}C{}", sheet + 1, row + 1, col + 1)
+            }
+            InsertTarget::Deck { slide, shape } => {
+                format!("第 {} 页 · 第 {} 个形状", slide + 1, shape + 1)
+            }
+            InsertTarget::Word { paragraph } => format!("第 {} 段", paragraph + 1),
+        }
+    }
+}
+
+/// 「插入引用」失败的原因。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefInsertError {
+    /// 尚未选择插入位置。
+    NoPosition,
+    /// 目标路径 / 选择器不合法，拼不出解析端认识的 token。
+    InvalidSelector,
+    /// 当前视图里已经找不到该插入位置（例如内容已被改过）。
+    MissingPosition,
+}
+
+/// 从当前视图里取出插入位置**已有**的文本。
+fn position_text(view: &PluginView, target: &InsertTarget) -> Option<String> {
+    match *target {
+        InsertTarget::Grid { sheet, row, col } => {
+            let sheets = match view {
+                PluginView::Grid { sheets } => sheets,
+                _ => return None,
+            };
+            sheets.get(sheet)?
+                .cells
+                .iter()
+                .find(|c| c.row == row && c.col == col)
+                .map(|c| c.text.clone())
+        }
+        InsertTarget::Deck { slide, shape } => {
+            let slides = match view {
+                PluginView::Deck { slides } => slides,
+                _ => return None,
+            };
+            let page = slides.iter().find(|s| s.index == slide)?;
+            page.shapes
+                .iter()
+                .find(|x| x.index == shape)
+                .map(|x| x.text.clone())
+        }
+        InsertTarget::Word { paragraph } => {
+            let paragraphs = match view {
+                PluginView::Word { paragraphs, .. } => paragraphs,
+                _ => return None,
+            };
+            paragraphs
+                .iter()
+                .find(|p| p.index == paragraph)
+                .map(|p| p.text.clone())
+        }
+    }
+}
+
+/// 计算「插入引用」要提交给插件的动作。
+///
+/// 固定三步：
+/// 1. [`format_reference_token`] 把「目标相对路径 + 选择器」拼成 `@路径#选择器`；
+/// 2. 从当前视图取出插入位置**已有**的文本；
+/// 3. 把 token **追加**到已有文本末尾，再复用既有的
+///    [`PluginAction::SetCell`] / [`SetShapeText`] / [`SetParagraph`] 提交。
+///
+/// 刻意不新增 `PluginAction` 变体：插件契约 v1 已冻结
+/// （补充约束 30），设置文本的三种动作已经够用。
+pub fn reference_insert_action(
+    view: &PluginView,
+    target: &InsertTarget,
+    target_path: &str,
+    selector: &str,
+) -> Result<PluginAction, RefInsertError> {
+    let token =
+        format_reference_token(target_path, selector).ok_or(RefInsertError::InvalidSelector)?;
+    let existing = position_text(view, target).ok_or(RefInsertError::MissingPosition)?;
+    let new_text = format!("{existing}{token}");
+    Ok(match *target {
+        InsertTarget::Grid { sheet, row, col } => PluginAction::SetCell {
+            sheet,
+            row,
+            col,
+            text: new_text,
+        },
+        InsertTarget::Deck { slide, shape } => PluginAction::SetShapeText {
+            slide,
+            shape,
+            text: new_text,
+        },
+        InsertTarget::Word { paragraph } => PluginAction::SetParagraph {
+            index: paragraph,
+            text: new_text,
+        },
+    })
+}
+
 /// 编辑器宿主：按插件声明的视图形态挂载通用面板。
 #[component]
 pub fn EditorHost(ctx: VaultContext, session: EditSession) -> Element {
     let edit = use_signal(|| session);
+    // 三个面板共用同一个「当前插入位置」信号。
+    let insert_target = use_signal(|| None::<InsertTarget>);
+    // 「插入引用」面板默认收起：目标列表要读全部文档原文，只在用户需要时求值。
+    let ref_open = use_signal(|| false);
     let current = edit.read().clone();
     let view = plugin::view(&current).ok();
     let editor_name = plugin::registry()
@@ -50,6 +177,7 @@ pub fn EditorHost(ctx: VaultContext, session: EditSession) -> Element {
         .map(|p| p.descriptor().display_name)
         .unwrap_or_else(|| "插件编辑器".to_string());
     let rel_path = current.rel_path.clone();
+    let ref_open_value = *ref_open.read();
 
     rsx! {
         section { class: "mkv-editor",
@@ -57,6 +185,16 @@ pub fn EditorHost(ctx: VaultContext, session: EditSession) -> Element {
                 span { class: "mkv-editor-name", "{editor_name}" }
                 span { class: "mkv-muted mkv-editor-path", "{rel_path}" }
                 div { class: "mkv-editor-actions",
+                    button {
+                        class: "mkv-btn mkv-btn-sm",
+                        title: "在正文里插入跨格式引用",
+                        onclick: move |_| {
+                            let currently = *ref_open.peek();
+                            let mut o = ref_open;
+                            o.set(!currently);
+                        },
+                        "插入引用"
+                    }
                     button {
                         class: "mkv-btn mkv-btn-primary",
                         onclick: move |_| {
@@ -81,11 +219,14 @@ pub fn EditorHost(ctx: VaultContext, session: EditSession) -> Element {
                     }
                 }
             }
+            if ref_open_value {
+                RefInsertPanel { ctx, edit, target: insert_target }
+            }
             div { class: "mkv-editor-body",
                 match view {
-                    Some(PluginView::Grid { .. }) => rsx! { GridCraftPanel { edit } },
-                    Some(PluginView::Deck { .. }) => rsx! { DeckCraftPanel { edit } },
-                    Some(PluginView::Word { .. }) => rsx! { WordCraftPanel { edit } },
+                    Some(PluginView::Grid { .. }) => rsx! { GridCraftPanel { ctx, edit, target: insert_target } },
+                    Some(PluginView::Deck { .. }) => rsx! { DeckCraftPanel { ctx, edit, target: insert_target } },
+                    Some(PluginView::Word { .. }) => rsx! { WordCraftPanel { ctx, edit, target: insert_target } },
                     None => rsx! {
                         div { class: "mkv-muted", "编辑器插件未安装或视图不可用" }
                     },
@@ -95,21 +236,183 @@ pub fn EditorHost(ctx: VaultContext, session: EditSession) -> Element {
     }
 }
 
+/// 「插入引用」面板：选目标文档 → 选片段 → 把 `@路径#选择器` 追加到插入位置。
+///
+/// **代价**：目标列表来自 [`mkv_core::service::KnowledgeService::reference_targets`]，
+/// native 实现会读取全部文档原文并切分片段，因此本面板**只在用户打开时挂载**
+/// （由 [`EditorHost`] 条件渲染），绝不能放进渲染热路径。
+#[component]
+pub fn RefInsertPanel(
+    ctx: VaultContext,
+    edit: Signal<EditSession>,
+    target: Signal<Option<InsertTarget>>,
+) -> Element {
+    // 只求值一次：面板挂载时取一次目标列表，之后复用。
+    let targets: Vec<ReferenceTarget> = use_hook(|| ctx.service.read().reference_targets());
+    let selected_path = use_signal(|| targets.first().map(|t| t.path.clone()).unwrap_or_default());
+    let selected_selector = use_signal(|| String::new());
+
+    let current_path = selected_path.read().clone();
+    let current_selector = selected_selector.read().clone();
+    let position = target.read().clone();
+
+    let current = targets.iter().find(|t| t.path == current_path);
+    let candidates: Vec<(usize, String)> = current
+        .map(|t| {
+            t.candidates
+                .iter()
+                .map(|(seq, label, _kind)| (*seq, label.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let position_text = match position {
+        Some(p) => p.describe(),
+        None => "尚未选择（在单元格 / 形状 / 段落旁点「引用」）".to_string(),
+    };
+
+    // 后端不支持插入引用（`reference_targets()` 默认为空）时，
+    // 面板不给出无用的下拉，而是如实说明。
+    if targets.is_empty() {
+        return rsx! {
+            div { class: "mkv-ref-insert",
+                div { class: "mkv-ref-insert-row",
+                    span { class: "mkv-muted", "当前后端没有可用的引用目标" }
+                }
+            }
+        };
+    }
+
+    rsx! {
+        div { class: "mkv-ref-insert",
+            div { class: "mkv-ref-insert-row",
+                span { class: "mkv-muted", "插入位置" }
+                span { class: "mkv-ref-insert-pos", "{position_text}" }
+            }
+            div { class: "mkv-ref-insert-row",
+                span { class: "mkv-muted", "目标文档" }
+                select {
+                    onchange: move |ev| {
+                        let value = ev.value();
+                        let mut p = selected_path;
+                        p.set(value);
+                        // 换文档后候选序号全部失效，选择器重置。
+                        let mut s = selected_selector;
+                        s.set(String::new());
+                    },
+                    for t in targets.iter() {
+                        option {
+                            value: "{t.path}",
+                            selected: t.path == current_path,
+                            "{t.title}"
+                        }
+                    }
+                }
+            }
+            div { class: "mkv-ref-insert-row",
+                span { class: "mkv-muted", "目标片段" }
+                select {
+                    disabled: candidates.is_empty(),
+                    onchange: move |ev| {
+                        let value = ev.value();
+                        let mut s = selected_selector;
+                        s.set(value);
+                    },
+                    for (seq, label) in candidates.iter() {
+                        option {
+                            value: "{seq}",
+                            selected: seq.to_string() == current_selector,
+                            "{seq}. {label}"
+                        }
+                    }
+                }
+                if candidates.is_empty() {
+                    span { class: "mkv-muted", "该文档没有可选片段" }
+                }
+            }
+            div { class: "mkv-ref-insert-row",
+                button {
+                    class: "mkv-btn mkv-btn-sm mkv-btn-primary",
+                    onclick: move |_| {
+                        let mut status = ctx.status;
+                        let mut edit = edit;
+                        let Some(pos) = *target.read() else {
+                            status.set("请先选择插入位置".to_string());
+                            return;
+                        };
+                        let path = selected_path.read().clone();
+                        let selector = selected_selector.read().clone();
+                        if path.is_empty() {
+                            status.set("请先选择目标文档".to_string());
+                            return;
+                        }
+                        let session = edit.read().clone();
+                        let Some(view) = plugin::view(&session).ok() else {
+                            status.set("编辑器视图不可用".to_string());
+                            return;
+                        };
+                        match reference_insert_action(&view, &pos, &path, &selector) {
+                            Ok(action) => {
+                                apply(&mut edit, action);
+                                status.set(format!("已插入引用 @{path}#{selector}"));
+                            }
+                            Err(RefInsertError::NoPosition) => {
+                                status.set("请先选择插入位置".to_string());
+                            }
+                            Err(RefInsertError::InvalidSelector) => {
+                                status.set("选择器不合法".to_string());
+                            }
+                            Err(RefInsertError::MissingPosition) => {
+                                status.set("插入位置已失效，请重新选择".to_string());
+                            }
+                        }
+                    },
+                    "插入"
+                }
+                span { class: "mkv-muted", "以 @路径#片段 的形式追加到所选位置末尾" }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------- Grid 视图
 
 #[component]
-fn GridCell(edit: Signal<EditSession>, sheet: usize, cell: CellView) -> Element {
+fn GridCell(
+    ctx: VaultContext,
+    edit: Signal<EditSession>,
+    target: Signal<Option<InsertTarget>>,
+    sheet: usize,
+    cell: CellView,
+) -> Element {
     let mut edit = edit;
     let row = cell.row;
     let col = cell.col;
     let text = cell.text;
     rsx! {
         td { class: "mkv-grid-cell",
-            input {
-                value: "{text}",
-                onchange: move |ev| apply(&mut edit, PluginAction::SetCell {
-                    sheet, row, col, text: ev.value(),
-                }),
+            div { class: "mkv-grid-cell-tools",
+                input {
+                    value: "{text}",
+                    onchange: move |ev| apply(&mut edit, PluginAction::SetCell {
+                        sheet, row, col, text: ev.value(),
+                    }),
+                }
+                button {
+                    class: "mkv-btn mkv-btn-sm mkv-ref-pick",
+                    title: "在这个单元格插入引用",
+                    onclick: move |_| {
+                        let mut t = target;
+                        t.set(Some(InsertTarget::Grid { sheet, row, col }));
+                        let mut s = ctx.status;
+                        s.set(format!(
+                            "已选择插入位置：第 {} 个工作表 · R{}C{}",
+                            sheet + 1,
+                            row + 1,
+                            col + 1
+                        ));
+                    },
+                    "引用"
+                }
             }
         }
     }
@@ -117,7 +420,11 @@ fn GridCell(edit: Signal<EditSession>, sheet: usize, cell: CellView) -> Element 
 
 /// 表格视图通用面板（由 `PluginView::Grid` 驱动，不依赖具体插件模型）。
 #[component]
-pub fn GridCraftPanel(edit: Signal<EditSession>) -> Element {
+pub fn GridCraftPanel(
+    ctx: VaultContext,
+    edit: Signal<EditSession>,
+    target: Signal<Option<InsertTarget>>,
+) -> Element {
     let mut edit = edit;
     let session = edit.read().clone();
     let Some(PluginView::Grid { sheets }) = plugin::view(&session).ok() else {
@@ -198,7 +505,13 @@ pub fn GridCraftPanel(edit: Signal<EditSession>) -> Element {
                             tr {
                                 td { class: "mkv-grid-rownum", "{line[0].row + 1}" }
                                 for cell in line.iter() {
-                                    GridCell { edit, sheet: current_sheet, cell: cell.clone() }
+                                    GridCell {
+                                        ctx,
+                                        edit,
+                                        target,
+                                        sheet: current_sheet,
+                                        cell: cell.clone(),
+                                    }
                                 }
                             }
                         }
@@ -212,23 +525,47 @@ pub fn GridCraftPanel(edit: Signal<EditSession>) -> Element {
 // ---------------------------------------------------------------- Deck 视图
 
 #[component]
-fn ShapeEditor(edit: Signal<EditSession>, slide: usize, shape: ShapeView) -> Element {
+fn ShapeEditor(
+    ctx: VaultContext,
+    edit: Signal<EditSession>,
+    target: Signal<Option<InsertTarget>>,
+    slide: usize,
+    shape: ShapeView,
+) -> Element {
     let mut edit = edit;
     let index = shape.index;
     let text = shape.text;
     rsx! {
-        textarea {
-            class: "mkv-word-text",
-            value: "{text}",
-            onchange: move |ev| apply(&mut edit, PluginAction::SetShapeText {
-                slide, shape: index, text: ev.value(),
-            }),
+        div { class: "mkv-word-shape",
+            textarea {
+                class: "mkv-word-text",
+                value: "{text}",
+                onchange: move |ev| apply(&mut edit, PluginAction::SetShapeText {
+                    slide, shape: index, text: ev.value(),
+                }),
+            }
+            button {
+                class: "mkv-btn mkv-btn-sm mkv-ref-pick",
+                title: "在这个形状插入引用",
+                onclick: move |_| {
+                    let mut t = target;
+                    t.set(Some(InsertTarget::Deck { slide, shape: index }));
+                    let mut s = ctx.status;
+                    s.set(format!("已选择插入位置：第 {} 页 · 第 {} 个形状", slide + 1, index + 1));
+                },
+                "引用"
+            }
         }
     }
 }
 
 #[component]
-fn SlideEditor(edit: Signal<EditSession>, slide: SlideView) -> Element {
+fn SlideEditor(
+    ctx: VaultContext,
+    edit: Signal<EditSession>,
+    target: Signal<Option<InsertTarget>>,
+    slide: SlideView,
+) -> Element {
     let mut edit = edit;
     let index = slide.index;
     let title = slide.title;
@@ -258,7 +595,7 @@ fn SlideEditor(edit: Signal<EditSession>, slide: SlideView) -> Element {
                 }
             }
             for shape in shapes.into_iter() {
-                ShapeEditor { edit, slide: index, shape }
+                ShapeEditor { ctx, edit, target, slide: index, shape }
             }
         }
     }
@@ -266,7 +603,11 @@ fn SlideEditor(edit: Signal<EditSession>, slide: SlideView) -> Element {
 
 /// 演示文稿视图通用面板。
 #[component]
-pub fn DeckCraftPanel(edit: Signal<EditSession>) -> Element {
+pub fn DeckCraftPanel(
+    ctx: VaultContext,
+    edit: Signal<EditSession>,
+    target: Signal<Option<InsertTarget>>,
+) -> Element {
     let session = edit.read().clone();
     let Some(PluginView::Deck { slides }) = plugin::view(&session).ok() else {
         return rsx! { div { class: "mkv-muted", "该插件未提供演示视图" } };
@@ -279,7 +620,7 @@ pub fn DeckCraftPanel(edit: Signal<EditSession>) -> Element {
             }
             div { class: "mkv-word-body",
                 for slide in slides.into_iter() {
-                    SlideEditor { edit, slide }
+                    SlideEditor { ctx, edit, target, slide }
                 }
             }
         }
@@ -290,7 +631,9 @@ pub fn DeckCraftPanel(edit: Signal<EditSession>) -> Element {
 
 #[component]
 fn ParagraphEditor(
+    ctx: VaultContext,
     edit: Signal<EditSession>,
+    target: Signal<Option<InsertTarget>>,
     paragraph: ParagraphView,
     style_options: Vec<String>,
 ) -> Element {
@@ -311,6 +654,17 @@ fn ParagraphEditor(
                     }
                 }
                 button {
+                    class: "mkv-btn mkv-btn-sm mkv-ref-pick",
+                    title: "在这一段插入引用",
+                    onclick: move |_| {
+                        let mut t = target;
+                        t.set(Some(InsertTarget::Word { paragraph: index }));
+                        let mut s = ctx.status;
+                        s.set(format!("已选择插入位置：第 {} 段", index + 1));
+                    },
+                    "引用"
+                }
+                button {
                     class: "mkv-btn mkv-btn-sm",
                     onclick: move |_| apply(&mut edit, PluginAction::RemoveParagraph { index }),
                     "删除"
@@ -329,7 +683,11 @@ fn ParagraphEditor(
 
 /// 文档视图通用面板；样式选项由插件声明，UI 不硬编码样式表。
 #[component]
-pub fn WordCraftPanel(edit: Signal<EditSession>) -> Element {
+pub fn WordCraftPanel(
+    ctx: VaultContext,
+    edit: Signal<EditSession>,
+    target: Signal<Option<InsertTarget>>,
+) -> Element {
     let mut edit = edit;
     let session = edit.read().clone();
     let Some(PluginView::Word { paragraphs, style_options }) = plugin::view(&session).ok() else {
@@ -353,7 +711,9 @@ pub fn WordCraftPanel(edit: Signal<EditSession>) -> Element {
             div { class: "mkv-word-body",
                 for paragraph in paragraphs.into_iter() {
                     ParagraphEditor {
+                        ctx,
                         edit,
+                        target,
                         paragraph,
                         style_options: style_options.clone(),
                     }

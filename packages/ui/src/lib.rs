@@ -14,14 +14,19 @@
 
 use dioxus::prelude::*;
 use mkv_core::editor::EditSession;
+use mkv_core::query::{QueryFilter, QueryMode, SearchQuery};
 use mkv_core::service::KnowledgeService;
 use mkv_core::types::{DocumentRecord, LinkRecord, SearchHit};
 
 pub mod components;
 
 pub use components::editors::{
-    DeckCraftPanel, EditorHost, EditorUpdateBanner, GridCraftPanel, WordCraftPanel,
+    reference_insert_action, DeckCraftPanel, EditorHost, EditorUpdateBanner, GridCraftPanel,
+    InsertTarget, RefInsertError, RefInsertPanel, WordCraftPanel,
 };
+// 图谱改用 V2 实现（力导向 + 缩放 + 聚焦），旧的环形图谱已被替换。
+pub use components::graph_panel::{GraphLegendV2, GraphPaneV2};
+pub use components::search_bar::FilterPanel;
 pub use components::SearchBar;
 
 /// 内联样式表。
@@ -69,6 +74,10 @@ pub struct VaultContext {
     pub current_doc: Signal<String>,
     /// 检索关键词。
     pub query: Signal<String>,
+    /// 检索模式（F-12）：普通词条 / 正则。
+    pub query_mode: Signal<QueryMode>,
+    /// 检索过滤器（F-07）：格式 / 标签 / 修改时间窗 / 来源路径。
+    pub query_filter: Signal<QueryFilter>,
     /// 检索结果。
     pub results: Signal<Vec<SearchHit>>,
     /// 当前文档的反链。
@@ -100,6 +109,8 @@ impl VaultContext {
             root: Signal::new(String::new()),
             current_doc: Signal::new(String::new()),
             query: Signal::new(String::new()),
+            query_mode: Signal::new(QueryMode::Terms),
+            query_filter: Signal::new(QueryFilter::default()),
             results: Signal::new(Vec::new()),
             backlinks: Signal::new(Vec::new()),
             status: Signal::new(String::from("就绪")),
@@ -135,8 +146,18 @@ impl VaultContext {
         }
         let query = self.query.peek().clone();
         if !query.trim().is_empty() {
+            // 必须走 search_query：否则自动刷新会丢掉模式与过滤条件，
+            // 用户设好的「正则 + 格式过滤」会被悄悄退回普通检索。
+            let mode = self.query_mode.peek().clone();
+            let filter = self.query_filter.peek().clone();
+            let search_query = SearchQuery {
+                text: query,
+                mode,
+                filter,
+                limit: 20,
+            };
             let mut results = self.results;
-            results.set(service.search(&query, 20));
+            results.set(service.search_query(&search_query));
         }
         let count = service.document_count();
         drop(service);
@@ -206,6 +227,8 @@ pub fn SideBar(ctx: VaultContext) -> Element {
     rsx! {
         aside { class: "mkv-sidebar",
             SearchBar { ctx }
+            // F-07 过滤面板：与检索框同属「检索中心」，故挂在页签之上。
+            FilterPanel { ctx }
             div { class: "mkv-list-tabs",
                 button {
                     class: if mode == ListMode::Documents { "mkv-tab mkv-tab-active" } else { "mkv-tab" },
@@ -230,7 +253,7 @@ pub fn SideBar(ctx: VaultContext) -> Element {
             } else if mode == ListMode::Results {
                 ResultList { ctx }
             } else {
-                GraphLegend { ctx }
+                GraphLegendV2 { ctx }
             }
         }
     }
@@ -312,6 +335,15 @@ pub fn ResultItem(ctx: VaultContext, hit: SearchHit) -> Element {
     let query = ctx.query.peek().clone();
     let location = ctx.service.read().locate(&hit.path, &query);
     let hit_path = hit.path.clone();
+    // F-12：core 在摘要里用哨兵字符标出正则命中段，这里只负责切成 <mark>。
+    let snippet_parts = split_match_marks(&hit.snippet);
+    // modified_at 为 0 表示后端没给时间戳，不显示「1970-01-01」这种假信息。
+    let modified = if hit.modified_at > 0 {
+        Some(format_unix_date(hit.modified_at))
+    } else {
+        None
+    };
+    let tags = hit.tags.clone();
 
     rsx! {
         button {
@@ -330,6 +362,27 @@ pub fn ResultItem(ctx: VaultContext, hit: SearchHit) -> Element {
             div { class: "mkv-result-meta",
                 span { "{hit.format}" }
                 span { class: "mkv-muted", "{hit.path}" }
+                if let Some(day) = modified.as_ref() {
+                    span { class: "mkv-result-time", "🕒 {day}" }
+                }
+            }
+            if !tags.is_empty() {
+                div { class: "mkv-result-tags",
+                    for tag in tags.iter() {
+                        span { class: "mkv-tag", "{tag}" }
+                    }
+                }
+            }
+            if !snippet_parts.is_empty() {
+                div { class: "mkv-result-snippet",
+                    for (marked, text) in snippet_parts.iter() {
+                        if *marked {
+                            mark { class: "mkv-mark", "{text}" }
+                        } else {
+                            span { "{text}" }
+                        }
+                    }
+                }
             }
             if let Some(loc) = location.as_ref() {
                 div { class: "mkv-hit-location",
@@ -341,6 +394,39 @@ pub fn ResultItem(ctx: VaultContext, hit: SearchHit) -> Element {
     }
 }
 
+/// 把 core 生成的哨兵摘要切成「普通段 / 命中段」。
+///
+/// core 用 [`mkv_core::query::MATCH_MARK_BEGIN`] / [`mkv_core::query::MATCH_MARK_END`]
+/// 包裹正则命中片段，UI 只需按标记切分并渲染 `<mark>`——
+/// **不需要**任何模式匹配能力，因此 UI crate 不必引入正则引擎。
+///
+/// 返回 `(是否命中段, 文本)` 的序列。
+fn split_match_marks(snippet: &str) -> Vec<(bool, String)> {
+    use mkv_core::query::{MATCH_MARK_BEGIN, MATCH_MARK_END};
+    let mut out: Vec<(bool, String)> = Vec::new();
+    let mut buf = String::new();
+    let mut marked = false;
+    for ch in snippet.chars() {
+        if ch == MATCH_MARK_BEGIN {
+            if !buf.is_empty() {
+                out.push((marked, std::mem::take(&mut buf)));
+            }
+            marked = true;
+        } else if ch == MATCH_MARK_END {
+            if !buf.is_empty() {
+                out.push((marked, std::mem::take(&mut buf)));
+            }
+            marked = false;
+        } else {
+            buf.push(ch);
+        }
+    }
+    if !buf.is_empty() {
+        out.push((marked, buf));
+    }
+    out
+}
+
 /// 右侧主区：预览 + 双链面板。
 #[component]
 pub fn MainPane(ctx: VaultContext) -> Element {
@@ -350,7 +436,7 @@ pub fn MainPane(ctx: VaultContext) -> Element {
     rsx! {
         main { class: "mkv-main",
             if mode == ListMode::Graph {
-                GraphPane { ctx }
+                GraphPaneV2 { ctx }
             } else if current.is_empty() {
                 div { class: "mkv-empty",
                     h2 { "欢迎使用 Migrant Knowledge Vault" }
@@ -597,128 +683,104 @@ fn name_of(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// 侧栏图谱图例：节点数 / 边数与节点清单（纯展示，点选跳转在图谱画布里完成）。
-#[component]
-pub fn GraphLegend(ctx: VaultContext) -> Element {
-    let _revision = *ctx.revision.read();
-    let graph = ctx.service.read().graph_snapshot();
+// ------------------------------------------------------------------
+// 日期换算（零依赖）
+//
+// 过滤面板要按「日期」筛修改时间，而 core 的 `QueryFilter` 收的是 Unix 秒。
+// 本 crate 不引入 chrono 等依赖，因此自己实现公历日期 ↔ Unix 秒的换算：
+// 采用 Howard Hinnant 的 `days_from_civil` / `civil_from_days` 算法，
+// 语义为 **UTC**（面板上也标注了「按 UTC 日期筛选」）。
+// ------------------------------------------------------------------
 
-    rsx! {
-        div { class: "mkv-graph-legend",
-            p { class: "mkv-muted", "{graph.nodes.len()} 个节点 · {graph.edges.len()} 条边" }
-            if graph.nodes.is_empty() {
-                p { class: "mkv-muted", "当前知识库还没有双链关系。" }
+/// 某年某月的天数（闰年判定用）。
+fn days_in_month(year: i64, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+                29
             } else {
-                for node in graph.nodes.clone() {
-                    div { class: "mkv-graph-legend-item",
-                        span { "{node.title}" }
-                        span { class: "mkv-muted", "{node.degree} 条连接" }
-                    }
-                }
+                28
             }
         }
+        _ => 0,
     }
 }
 
-/// 图谱画布：SVG 环形布局 + 缩放 + 点选节点跳转（F-10）。
-#[component]
-pub fn GraphPane(ctx: VaultContext) -> Element {
-    let _revision = *ctx.revision.read();
-    let graph = ctx.service.read().graph_snapshot();
-    let mut zoom = use_signal(|| 1.0f32);
-    let scale = *zoom.read();
-    let cx = graph.width / 2.0;
-    let cy = graph.height / 2.0;
-    let view_box = format!("0 0 {} {}", graph.width, graph.height);
-    let transform = format!(
-        "translate({cx} {cy}) scale({scale}) translate(-{cx} -{cy})"
-    );
-    let node_count = graph.nodes.len();
-    let edge_count = graph.edges.len();
-
-    rsx! {
-        section { class: "mkv-graph",
-            div { class: "mkv-graph-header",
-                h2 { "双链关系图谱" }
-                span { class: "mkv-muted", "{node_count} 个节点 · {edge_count} 条边" }
-                div { class: "mkv-graph-tools",
-                    button {
-                        class: "mkv-btn mkv-btn-sm",
-                        onclick: move |_| {
-                            let current = *zoom.peek();
-                            zoom.set((current * 1.25).min(2.5));
-                        },
-                        "放大 +"
-                    }
-                    button {
-                        class: "mkv-btn mkv-btn-sm",
-                        onclick: move |_| {
-                            let current = *zoom.peek();
-                            zoom.set((current / 1.25).max(0.5));
-                        },
-                        "缩小 −"
-                    }
-                    button {
-                        class: "mkv-btn mkv-btn-sm",
-                        onclick: move |_| { zoom.set(1.0); },
-                        "重置"
-                    }
-                }
-            }
-            div { class: "mkv-graph-canvas",
-                svg {
-                    class: "mkv-graph-svg",
-                    view_box: "{view_box}",
-                    g { transform: "{transform}",
-                        for edge in graph.edges.clone() {
-                            if let (Some(a), Some(b)) =
-                                (graph.nodes.get(edge.from), graph.nodes.get(edge.to))
-                            {
-                                line {
-                                    class: "mkv-graph-edge",
-                                    x1: "{a.x}", y1: "{a.y}",
-                                    x2: "{b.x}", y2: "{b.y}",
-                                }
-                            }
-                        }
-                        for node in graph.nodes.clone() {
-                            GraphNodeMark { ctx, node }
-                        }
-                    }
-                }
-                if node_count == 0 {
-                    p { class: "mkv-muted", "知识库为空，暂无可绘制的双链关系。" }
-                }
-            }
-        }
+/// 解析 `YYYY-MM-DD`（也接受 `YYYY/MM/DD`），返回 `(年, 月, 日)`。
+///
+/// 解析失败（格式不对、越界、日期不存在）返回 `None`——UI 据此把该侧时间窗
+/// 视为「不限」，而不是拿一个错误的秒数去过滤。
+pub(crate) fn parse_civil_date(text: &str) -> Option<(i64, u32, u32)> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
     }
+    let normalized = trimmed.replace('/', "-");
+    let mut parts = normalized.split('-');
+    let year: i64 = parts.next()?.trim().parse().ok()?;
+    let month: u32 = parts.next()?.trim().parse().ok()?;
+    let day: u32 = parts.next()?.trim().parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
+        return None;
+    }
+    Some((year, month, day))
 }
 
-/// 单个图谱节点：点击后回到预览视图并选中该文档。
-#[component]
-pub fn GraphNodeMark(ctx: VaultContext, node: mkv_core::locate::GraphNodeView) -> Element {
-    let path = node.path.clone();
-    let title: String = node.title.chars().take(10).collect();
-    let x = node.x;
-    let y = node.y;
-    let r = 7.0 + (node.degree.min(4) as f32) * 1.8;
+/// 公历日期 → 距 1970-01-01 的天数（Howard Hinnant 的 `days_from_civil`）。
+pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
 
-    rsx! {
-        g {
-            class: "mkv-graph-node",
-            onclick: move |_| {
-                let mut current_doc = ctx.current_doc;
-                let mut backlinks = ctx.backlinks;
-                let mut list_mode = ctx.list_mode;
-                current_doc.set(path.clone());
-                backlinks.set(ctx.service.read().backlinks(&path));
-                ctx.focus.set(None);
-                list_mode.set(ListMode::Documents);
-            },
-            circle { class: "mkv-graph-node-dot", cx: "{x}", cy: "{y}", r: "{r}" }
-            text { class: "mkv-graph-node-label", x: "{x}", y: "{y}", "{title}" }
-        }
+/// 距 1970-01-01 的天数 → 公历日期（`civil_from_days` 的逆运算）。
+pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    (year, month as u32, day as u32)
+}
+
+/// 起始日期 → Unix 秒（UTC 当天 00:00:00，闭区间下界）。
+pub(crate) fn date_to_unix_start(text: &str) -> Option<u64> {
+    let (year, month, day) = parse_civil_date(text)?;
+    let seconds = days_from_civil(year, month as i64, day as i64) * 86_400;
+    if seconds < 0 {
+        return None;
     }
+    Some(seconds as u64)
+}
+
+/// 截止日期 → Unix 秒（UTC 当天 23:59:59，闭区间上界）。
+pub(crate) fn date_to_unix_end(text: &str) -> Option<u64> {
+    let (year, month, day) = parse_civil_date(text)?;
+    let seconds = days_from_civil(year, month as i64, day as i64) * 86_400 + 86_399;
+    if seconds < 0 {
+        return None;
+    }
+    Some(seconds as u64)
+}
+
+/// Unix 秒 → `YYYY-MM-DD`（UTC）。
+pub(crate) fn format_unix_date(seconds: u64) -> String {
+    let (year, month, day) = civil_from_days((seconds / 86_400) as i64);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 /// 双链面板：显示当前文档的反链。

@@ -47,11 +47,32 @@ pub struct PendingUpgrade {
     pub requires_rebuild: bool,
 }
 
+/// 某个插件的后端选择（架构闭环的配置载体）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackendPin {
+    /// 插件 ID（对应 [`UpstreamPin::id`]）。
+    pub id: String,
+    /// 后端类型：`builtin` / `external`。
+    pub kind: String,
+    /// 选择理由（写进锁文件，避免后人重复调研）。
+    #[serde(default)]
+    pub reason: String,
+    /// `external` 时的上游可执行程序名（如 `deckcraft-cli`）。
+    #[serde(default)]
+    pub command: String,
+    /// `external` 时的启动参数。
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorsLock {
     pub contract_version: u32,
     #[serde(default)]
     pub plugins: Vec<UpstreamPin>,
+    /// 各插件的后端选择。缺省时全部视为 `builtin`。
+    #[serde(default)]
+    pub backends: Vec<BackendPin>,
     #[serde(default)]
     pub skipped_revisions: Vec<String>,
     #[serde(default)]
@@ -78,7 +99,36 @@ impl EditorsLock {
                 return Err(Error::Config(format!("插件 {} 的上游 pin 不完整", p.id)));
             }
         }
+        for b in &self.backends {
+            if b.kind != "builtin" && b.kind != "external" {
+                return Err(Error::Config(format!(
+                    "插件 {} 的后端类型 `{}` 非法（应为 builtin / external）",
+                    b.id, b.kind
+                )));
+            }
+            if b.kind == "external" && b.command.trim().is_empty() {
+                return Err(Error::Config(format!(
+                    "插件 {} 选择了 external 后端但未配置上游命令",
+                    b.id
+                )));
+            }
+        }
         Ok(())
+    }
+
+    /// 取某插件的后端配置；未配置时返回默认的 `builtin`。
+    pub fn backend_of(&self, plugin_id: &str) -> BackendPin {
+        self.backends
+            .iter()
+            .find(|b| b.id == plugin_id)
+            .cloned()
+            .unwrap_or_else(|| BackendPin {
+                id: plugin_id.to_string(),
+                kind: "builtin".to_string(),
+                reason: String::new(),
+                command: String::new(),
+                args: Vec::new(),
+            })
     }
 }
 
@@ -353,6 +403,46 @@ mod tests {
             ]
         );
         assert!(l.plugins.iter().all(|p| p.pinned_rev.len() == 40));
+    }
+
+    #[test]
+    fn bundled_lock_declares_builtin_backends_with_reason() {
+        let l = lock();
+        assert_eq!(l.backends.len(), 3, "三个插件都应有后端配置");
+        for b in &l.backends {
+            assert_eq!(b.kind, "builtin", "{} 默认应为 builtin", b.id);
+            assert!(!b.reason.is_empty(), "{} 应记录选择理由", b.id);
+        }
+        // 未配置的插件回落到 builtin
+        let fallback = l.backend_of("not-configured");
+        assert_eq!(fallback.kind, "builtin");
+        assert!(fallback.command.is_empty());
+    }
+
+    #[test]
+    fn external_backend_without_command_is_rejected() {
+        let mut l = lock();
+        l.backends.push(BackendPin {
+            id: "gridcraft".into(),
+            kind: "external".into(),
+            reason: String::new(),
+            command: String::new(),
+            args: vec![],
+        });
+        assert!(l.validate().is_err(), "external 后端缺命令应被拒绝");
+    }
+
+    #[test]
+    fn unknown_backend_kind_is_rejected() {
+        let mut l = lock();
+        l.backends.push(BackendPin {
+            id: "gridcraft".into(),
+            kind: "quantum".into(),
+            reason: String::new(),
+            command: "x".into(),
+            args: vec![],
+        });
+        assert!(l.validate().is_err(), "未知后端类型应被拒绝");
     }
 
     #[test]

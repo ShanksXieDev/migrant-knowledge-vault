@@ -3,6 +3,16 @@
 //! 本模块只依赖 `serde` 与 [`crate::format::Format`]，**无任何原生 / C 依赖**，
 //! 因此 Web（wasm32）与 Desktop / Mobile 三端都能编译。
 //!
+//! ## 图谱坐标：构建期预计算 vs 运行期计算
+//!
+//! 力导向布局引擎（`crate::graph_layout`）**只在 native（构建期）参与编译**：
+//! wasm32 目标不携带它，Web 端的图谱坐标由构建期算好后随预构建索引产物发布
+//! （见 [`crate::prebuilt::PrebuiltIndex::graph_positions`]）。
+//!
+//! 非 native 构建下 [`build_graph_snapshot_with_positions`] 拿不到预计算坐标时
+//! （schema v1 旧产物 / 远端热替换拿到旧产物），回退到**确定性环形布局**：
+//! 它不含浮点迭代引擎、体积极小，保证图谱面板不白屏、不 panic。
+//!
 //! ## 为什么是「文本片段」而不是改抽取器
 //!
 //! 六格式抽取器（`parse.rs`）已经把原文规范化成一份纯文本 `text`，
@@ -19,6 +29,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::format::Format;
+// 布局引擎只在 native（构建期）侧参与编译：wasm 产物不携带它，
+// 图谱坐标改为构建期预计算后随索引产物发布（见 `PrebuiltIndex::graph_positions`）。
+#[cfg(feature = "native")]
+use crate::graph_layout::{force_directed_layout, LayoutConfig, LayoutNode, LayoutPoint};
 
 /// 原文中的一个可定位片段。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,6 +57,56 @@ pub struct HitLocation {
     pub matched: String,
     /// 命中处上下文，供结果列表与定位条展示。
     pub snippet: String,
+}
+
+/// 图谱画布宽度。
+///
+/// 旧的环形布局用 440×360；力导向布局需要更大的活动空间，
+/// 否则斥力项会把节点挤在中心一小团里，因此统一放大到 720×560。
+pub const GRAPH_CANVAS_WIDTH: f32 = 720.0;
+/// 图谱画布高度（与 [`GRAPH_CANVAS_WIDTH`] 配套）。
+pub const GRAPH_CANVAS_HEIGHT: f32 = 560.0;
+/// 力导向布局的固定随机种子。
+///
+/// 固定 seed 是**确定性**的前提：布局模块内部的随机性只来自自带的
+/// splitmix64 PRNG，种子固定 ⇒ 同一输入产出逐字节相同的坐标。
+#[cfg(feature = "native")]
+const GRAPH_LAYOUT_SEED: u64 = 0x5EED_1A7E_C0DE_1234;
+/// 力导向布局的迭代轮数（与布局模块默认值同量级）。
+#[cfg(feature = "native")]
+const GRAPH_LAYOUT_ITERATIONS: usize = 240;
+
+/// 图谱布局方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GraphLayout {
+    /// 确定性环形布局：节点均分在一个圆周上，度数越高半径越小（枢纽靠中心）。
+    ///
+    /// 优点是坐标可手算、视觉稳定；缺点是表达不了「簇」。
+    Ring,
+    /// 力导向布局（Fruchterman–Reingold 变体，见 `crate::graph_layout`）。
+    ///
+    /// - **分簇**：同一文档格式的节点聚成一族（和 UI 的按格式着色一致）；
+    /// - **枢纽居中**：节点权重取度数，度数越高越靠近画布中心；
+    /// - **确定性**：同一输入 + 同一参数 ⇒ 逐字节相同的坐标。
+    ///
+    /// 注意：布局引擎只在 `native`（构建期）参与编译，非 native 构建下
+    /// 该选项退化为**环形布局**（见 [`build_graph_snapshot_with`]）。
+    #[default]
+    ForceDirected,
+}
+
+/// 图谱节点坐标（构建期预计算，随预构建索引产物发布）。
+///
+/// Web（wasm32）端不携带浮点布局引擎，坐标由 native 侧在**构建期**算好后
+/// 随索引产物一起打包；运行期只做查表，不做任何迭代。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphPosition {
+    /// 文档相对路径（与 [`PrebuiltDoc`](crate::prebuilt::PrebuiltDoc) 的 `path` 一致）。
+    pub path: String,
+    /// 画布横坐标。
+    pub x: f32,
+    /// 画布纵坐标。
+    pub y: f32,
 }
 
 /// 图谱节点（已带布局坐标）。
@@ -77,8 +141,8 @@ impl Default for GraphSnapshot {
         Self {
             nodes: Vec::new(),
             edges: Vec::new(),
-            width: 440.0,
-            height: 360.0,
+            width: GRAPH_CANVAS_WIDTH,
+            height: GRAPH_CANVAS_HEIGHT,
         }
     }
 }
@@ -342,15 +406,129 @@ fn make_location_snippet(text: &str, hit_char: usize, match_chars: usize) -> Str
     }
 }
 
-/// 由文档列表与双链边构建可直接渲染的图谱快照。
+/// 由文档列表与双链边构建可直接渲染的图谱快照（**力导向布局**）。
 ///
-/// - 节点按路径排序，布局为确定性环形（高度数节点更靠中心）；
-/// - 悬空目标（不在文档列表里）与自环会被忽略；
-/// - 相同边去重，避免重复链接把图谱画粗。
+/// 等价于 [`build_graph_snapshot_with`] 且 `layout = GraphLayout::ForceDirected`。
+/// 想要旧的环形布局请显式调用 [`build_graph_snapshot_with`]。
 pub fn build_graph_snapshot(
     nodes: &[(String, String)],
     links: &[(String, String)],
 ) -> GraphSnapshot {
+    build_graph_snapshot_with(nodes, links, GraphLayout::default())
+}
+
+/// 由文档列表与双链边构建图谱快照，可选择布局方式。
+///
+/// - 节点按路径排序并按路径去重；
+/// - 悬空目标（不在文档列表里）与自环会被忽略；
+/// - 相同边去重，避免重复链接把图谱画粗；
+/// - 坐标由 [`GraphLayout`] 决定，两种布局都保证坐标落在画布内且非 `NaN`。
+///
+/// 画布固定为 [`GRAPH_CANVAS_WIDTH`] × [`GRAPH_CANVAS_HEIGHT`]，
+/// 切换布局不会改变画布尺寸（UI 侧无需重新适配视口）。
+///
+/// 非 native（wasm32）构建不携带力导向引擎，此时 `ForceDirected` 退化为
+/// 环形布局（见模块文档「图谱坐标：构建期预计算 vs 运行期计算」）。
+pub fn build_graph_snapshot_with(
+    nodes: &[(String, String)],
+    links: &[(String, String)],
+    layout: GraphLayout,
+) -> GraphSnapshot {
+    let topo = graph_topology(nodes, links);
+    let views = match layout {
+        GraphLayout::Ring => ring_positions(&topo.sorted, &topo.degree),
+        GraphLayout::ForceDirected => force_positions(&topo.sorted, &topo.degree, &topo.edges),
+    };
+    GraphSnapshot {
+        nodes: views,
+        edges: topo.edges,
+        width: GRAPH_CANVAS_WIDTH,
+        height: GRAPH_CANVAS_HEIGHT,
+    }
+}
+
+/// 由文档列表、双链边与**构建期预计算的坐标**构建图谱快照。
+///
+/// 这是 Web（wasm32）端的正式入口：坐标随预构建索引产物一起发布
+/// （见 [`crate::prebuilt::PrebuiltIndex::graph_positions`]），
+/// 运行期只做查表，**不再执行 240 轮浮点迭代**。
+///
+/// 容错策略：
+/// - 坐标表为空（schema v1 旧产物 / 远端热替换拿到旧产物）⇒ 整体退回环形布局；
+/// - 个别节点缺坐标或坐标非法（`NaN` / 越界）⇒ 该节点单独退回环形布局。
+///
+/// 拓扑（节点 / 边 / 度数）仍在本函数现算：它只涉及字符串比较与查表，
+/// 代价极低，且保证图谱结构永远与当前产物一致。
+pub fn build_graph_snapshot_with_positions(
+    nodes: &[(String, String)],
+    links: &[(String, String)],
+    positions: &[GraphPosition],
+) -> GraphSnapshot {
+    let topo = graph_topology(nodes, links);
+    // 基线坐标：native 走力导向布局，非 native 走环形布局（体积小、无迭代）。
+    let mut views = base_positions(&topo.sorted, &topo.degree, &topo.edges);
+    if !positions.is_empty() {
+        let table: std::collections::HashMap<&str, (f32, f32)> = positions
+            .iter()
+            .map(|p| (p.path.as_str(), (p.x, p.y)))
+            .collect();
+        for (i, (path, _)) in topo.sorted.iter().enumerate() {
+            let Some(&(x, y)) = table.get(path.as_str()) else {
+                continue;
+            };
+            if !x.is_finite() || !y.is_finite() {
+                continue;
+            }
+            views[i].x = x.clamp(0.0, GRAPH_CANVAS_WIDTH);
+            views[i].y = y.clamp(0.0, GRAPH_CANVAS_HEIGHT);
+        }
+    }
+    GraphSnapshot {
+        nodes: views,
+        edges: topo.edges,
+        width: GRAPH_CANVAS_WIDTH,
+        height: GRAPH_CANVAS_HEIGHT,
+    }
+}
+
+/// 基线坐标：native 用力导向布局，非 native 用环形布局。
+#[cfg(feature = "native")]
+fn base_positions(
+    sorted: &[(String, String)],
+    degree: &[usize],
+    edges: &[GraphEdgeView],
+) -> Vec<GraphNodeView> {
+    force_positions(sorted, degree, edges)
+}
+
+/// 基线坐标：非 native 构建没有布局引擎，退回确定性环形布局。
+#[cfg(not(feature = "native"))]
+fn base_positions(
+    sorted: &[(String, String)],
+    degree: &[usize],
+    _edges: &[GraphEdgeView],
+) -> Vec<GraphNodeView> {
+    ring_positions(sorted, degree)
+}
+
+/// 图谱拓扑：与「坐标怎么算」无关的那一半。
+///
+/// 把拓扑与坐标拆开是「构建期预计算」的前提：拓扑可以任意端现算
+/// （纯字符串处理，微秒级），坐标则要么来自构建期产物，要么退化成环形布局。
+struct GraphTopology {
+    /// 按路径排序并按路径去重后的节点。
+    sorted: Vec<(String, String)>,
+    /// 去重并剔除悬空目标与自环后的边。
+    edges: Vec<GraphEdgeView>,
+    /// 每个节点的度数（入边 + 出边）。
+    degree: Vec<usize>,
+}
+
+/// 计算图谱拓扑：排序去重节点、剔除悬空 / 自环 / 重复边、统计度数。
+fn graph_topology(
+    nodes: &[(String, String)],
+    links: &[(String, String)],
+) -> GraphTopology {
     let mut sorted: Vec<(String, String)> = nodes.to_vec();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
     sorted.dedup_by(|a, b| a.0 == b.0);
@@ -379,34 +557,123 @@ pub fn build_graph_snapshot(
         degree[b] += 1;
     }
 
-    let width = 440.0f32;
-    let height = 360.0f32;
-    let cx = width / 2.0;
-    let cy = height / 2.0;
+    GraphTopology {
+        sorted,
+        edges,
+        degree,
+    }
+}
+
+/// 确定性环形布局：节点均分在圆周上，度数越高半径越小（枢纽靠中心）。
+fn ring_positions(sorted: &[(String, String)], degree: &[usize]) -> Vec<GraphNodeView> {
+    let cx = GRAPH_CANVAS_WIDTH / 2.0;
+    let cy = GRAPH_CANVAS_HEIGHT / 2.0;
     let n = sorted.len().max(1);
-    let views: Vec<GraphNodeView> = sorted
+    // 最大半径取画布短边的 42%，给节点标签留出边距。
+    let max_radius = GRAPH_CANVAS_WIDTH.min(GRAPH_CANVAS_HEIGHT) * 0.42;
+    sorted
         .iter()
         .enumerate()
         .map(|(i, (path, title))| {
             let angle = -std::f32::consts::FRAC_PI_2
                 + 2.0 * std::f32::consts::PI * (i as f32) / (n as f32);
             // 度数越高半径越小 → 枢纽节点靠中心，视觉上形成簇
-            let radius = 150.0 - 55.0 * (degree[i].min(4) as f32 / 4.0);
+            let radius = max_radius * (1.0 - 0.37 * (degree[i].min(4) as f32 / 4.0));
             GraphNodeView {
                 path: path.clone(),
                 title: title.clone(),
-                x: cx + radius * angle.cos(),
-                y: cy + radius * angle.sin(),
+                x: (cx + radius * angle.cos()).clamp(0.0, GRAPH_CANVAS_WIDTH),
+                y: (cy + radius * angle.sin()).clamp(0.0, GRAPH_CANVAS_HEIGHT),
                 degree: degree[i],
             }
         })
-        .collect();
+        .collect()
+}
 
-    GraphSnapshot {
-        nodes: views,
-        edges,
-        width,
-        height,
+/// 力导向布局：按文档格式分簇，度数作为节点权重（枢纽更靠中心）。
+///
+/// 只在 **native（构建期）** 编译：布局引擎（浮点迭代 + Barnes–Hut 网格）
+/// 体积不小，wasm32 产物不携带它。
+#[cfg(feature = "native")]
+fn force_positions(
+    sorted: &[(String, String)],
+    degree: &[usize],
+    edges: &[GraphEdgeView],
+) -> Vec<GraphNodeView> {
+    let layout_nodes: Vec<LayoutNode> = sorted
+        .iter()
+        .enumerate()
+        .map(|(i, (path, _))| LayoutNode {
+            index: i,
+            // 权重 = 度数：度数越高，簇内初始排布越靠核心，且居中力越大。
+            weight: degree[i] as f32,
+            // 分簇标识：同一格式的文档聚成一族。
+            group: format_group(path),
+        })
+        .collect();
+    let layout_edges: Vec<(usize, usize)> = edges.iter().map(|e| (e.from, e.to)).collect();
+    let config = LayoutConfig {
+        width: GRAPH_CANVAS_WIDTH,
+        height: GRAPH_CANVAS_HEIGHT,
+        iterations: GRAPH_LAYOUT_ITERATIONS,
+        repulsion: 1.0,
+        spring: 1.0,
+        group_attraction: 2.0,
+        damping: 0.85,
+        seed: GRAPH_LAYOUT_SEED,
+    };
+    let points = force_directed_layout(&layout_nodes, &layout_edges, &config);
+    sorted
+        .iter()
+        .enumerate()
+        .map(|(i, (path, title))| {
+            // 布局模块已保证坐标在画布内且非 NaN；这里再兜一层，
+            // 保证快照结构在任何输入下都自洽。
+            let point = points.get(i).copied().unwrap_or(LayoutPoint {
+                x: GRAPH_CANVAS_WIDTH / 2.0,
+                y: GRAPH_CANVAS_HEIGHT / 2.0,
+            });
+            GraphNodeView {
+                path: path.clone(),
+                title: title.clone(),
+                x: point.x.clamp(0.0, GRAPH_CANVAS_WIDTH),
+                y: point.y.clamp(0.0, GRAPH_CANVAS_HEIGHT),
+                degree: degree[i],
+            }
+        })
+        .collect()
+}
+
+/// 非 native 构建下的力导向替身：**退化为确定性环形布局**。
+///
+/// wasm32 产物不携带浮点布局引擎，Web 端的坐标改由构建期预计算
+/// （见 [`build_graph_snapshot_with_positions`]）；这里只保证
+/// `GraphLayout::ForceDirected` 这个选项在非 native 构建下仍然可用、
+/// 且不会把布局引擎拖进 wasm 产物。
+#[cfg(not(feature = "native"))]
+fn force_positions(
+    sorted: &[(String, String)],
+    degree: &[usize],
+    _edges: &[GraphEdgeView],
+) -> Vec<GraphNodeView> {
+    ring_positions(sorted, degree)
+}
+
+/// 由路径扩展名推导布局用的分簇标识：同一格式的文档聚成一族。
+///
+/// 判定与 UI 侧的「按格式着色」一致（都走 [`Format::from_extension`]），
+/// 因此图上看得见的簇 = 图例里的颜色。
+#[cfg(feature = "native")]
+fn format_group(path: &str) -> u32 {
+    let ext = path.rsplit('.').next().unwrap_or_default();
+    match Format::from_extension(ext) {
+        Some(Format::Markdown) => 0,
+        Some(Format::Excel) => 1,
+        Some(Format::PowerPoint) => 2,
+        Some(Format::Word) => 3,
+        Some(Format::Visio) => 4,
+        Some(Format::Drawio) => 5,
+        None => 6,
     }
 }
 
@@ -507,5 +774,243 @@ mod tests {
         let hit = locate_in_segments(&segs, "模流分析").expect("应命中");
         assert_ne!(hit.kind, "heading", "标题也含查询词时应优先定位正文段落");
         assert!(hit.label.contains("第 1 段"), "实际标签 {}", hit.label);
+    }
+
+    // ------------------------------------------------------------ 图谱布局
+
+    /// 40 个节点的链式图：够大能触发布局收敛，又不至于让测试变慢。
+    fn chain_graph(n: usize) -> (Vec<(String, String)>, Vec<(String, String)>) {
+        let nodes = (0..n)
+            .map(|i| (format!("doc{i}.md"), format!("D{i}")))
+            .collect::<Vec<_>>();
+        let links = (0..n.saturating_sub(1))
+            .map(|i| (format!("doc{i}.md"), format!("doc{}.md", i + 1)))
+            .collect::<Vec<_>>();
+        (nodes, links)
+    }
+
+    #[test]
+    fn force_layout_is_deterministic_bit_for_bit() {
+        let (nodes, links) = chain_graph(40);
+        let a = build_graph_snapshot_with(&nodes, &links, GraphLayout::ForceDirected);
+        let b = build_graph_snapshot_with(&nodes, &links, GraphLayout::ForceDirected);
+        assert_eq!(a.nodes.len(), b.nodes.len());
+        for (x, y) in a.nodes.iter().zip(b.nodes.iter()) {
+            assert_eq!(x.x.to_bits(), y.x.to_bits(), "x 必须逐字节相同");
+            assert_eq!(x.y.to_bits(), y.y.to_bits(), "y 必须逐字节相同");
+        }
+        assert_eq!(a, b, "同一输入必须产出完全一致的快照");
+        // 默认入口走的就是力导向布局。
+        assert_eq!(build_graph_snapshot(&nodes, &links), a);
+    }
+
+    #[test]
+    fn force_layout_coordinates_stay_inside_canvas() {
+        let (nodes, links) = chain_graph(60);
+        let g = build_graph_snapshot_with(&nodes, &links, GraphLayout::ForceDirected);
+        assert_eq!(g.width, GRAPH_CANVAS_WIDTH);
+        assert_eq!(g.height, GRAPH_CANVAS_HEIGHT);
+        for node in &g.nodes {
+            assert!(node.x.is_finite() && node.y.is_finite(), "坐标不能是 NaN/Inf");
+            assert!(
+                (0.0..=g.width).contains(&node.x),
+                "x 越界: {}",
+                node.x
+            );
+            assert!(
+                (0.0..=g.height).contains(&node.y),
+                "y 越界: {}",
+                node.y
+            );
+        }
+    }
+
+    #[test]
+    fn isolated_nodes_are_still_placed_by_both_layouts() {
+        // 没有任何边的孤立节点：不能塌成 NaN，也必须落在画布内。
+        let nodes = vec![
+            ("a.md".to_string(), "A".to_string()),
+            ("b.xlsx".to_string(), "B".to_string()),
+            ("c.drawio".to_string(), "C".to_string()),
+        ];
+        for layout in [GraphLayout::Ring, GraphLayout::ForceDirected] {
+            let g = build_graph_snapshot_with(&nodes, &[], layout);
+            assert_eq!(g.nodes.len(), 3, "{layout:?}");
+            for node in &g.nodes {
+                assert!(
+                    node.x.is_finite() && node.y.is_finite(),
+                    "{layout:?}: 孤立节点坐标非法"
+                );
+                assert!((0.0..=g.width).contains(&node.x), "{layout:?}");
+                assert!((0.0..=g.height).contains(&node.y), "{layout:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn both_layouts_drop_self_loops_and_dangling_edges() {
+        let nodes = vec![
+            ("a.md".to_string(), "A".to_string()),
+            ("b.md".to_string(), "B".to_string()),
+            ("c.md".to_string(), "C".to_string()),
+        ];
+        let links = vec![
+            ("a.md".to_string(), "b.md".to_string()),
+            ("a.md".to_string(), "b.md".to_string()), // 重复边
+            ("b.md".to_string(), "missing.md".to_string()), // 悬空目标
+            ("c.md".to_string(), "c.md".to_string()), // 自环
+        ];
+        for layout in [GraphLayout::Ring, GraphLayout::ForceDirected] {
+            let g = build_graph_snapshot_with(&nodes, &links, layout);
+            assert_eq!(g.nodes.len(), 3, "{layout:?}");
+            assert_eq!(
+                g.edges.len(),
+                1,
+                "{layout:?}: 重复 / 悬空 / 自环边应被剔除"
+            );
+            assert_eq!(g.edges[0].from, 0);
+            assert_eq!(g.edges[0].to, 1);
+            assert_eq!(g.nodes[0].degree, 1, "{layout:?}: 度数统计不受布局影响");
+            assert_eq!(g.nodes[2].degree, 0, "{layout:?}: 自环不计入度数");
+        }
+    }
+
+    #[test]
+    fn high_degree_nodes_sit_closer_to_the_canvas_center() {
+        // 星形图：doc0 与其余 19 个节点相连，度数远高于其他节点。
+        let mut nodes: Vec<(String, String)> = Vec::new();
+        let mut links: Vec<(String, String)> = Vec::new();
+        for i in 0..20 {
+            nodes.push((format!("doc{i}.md"), format!("D{i}")));
+        }
+        for i in 1..20 {
+            links.push(("doc0.md".to_string(), format!("doc{i}.md")));
+        }
+        let g = build_graph_snapshot_with(&nodes, &links, GraphLayout::ForceDirected);
+        let cx = g.width / 2.0;
+        let cy = g.height / 2.0;
+        let dist = |n: &GraphNodeView| ((n.x - cx).powi(2) + (n.y - cy).powi(2)).sqrt();
+        let hub = dist(&g.nodes[0]);
+        let others: f32 = g.nodes[1..].iter().map(|n| dist(n)).sum::<f32>() / 19.0;
+        assert!(
+            hub < others,
+            "枢纽节点离中心 {hub} 应小于其他节点的平均距离 {others}"
+        );
+    }
+
+    #[test]
+    fn ring_layout_keeps_hubs_nearer_to_the_center() {
+        // 环形布局的语义：度数越高半径越小 → 越靠近中心。
+        let mut nodes: Vec<(String, String)> = Vec::new();
+        let mut links: Vec<(String, String)> = Vec::new();
+        for i in 0..12 {
+            nodes.push((format!("doc{i}.md"), format!("D{i}")));
+        }
+        for i in 1..12 {
+            links.push(("doc0.md".to_string(), format!("doc{i}.md")));
+        }
+        let g = build_graph_snapshot_with(&nodes, &links, GraphLayout::Ring);
+        let cx = g.width / 2.0;
+        let cy = g.height / 2.0;
+        let dist = |n: &GraphNodeView| ((n.x - cx).powi(2) + (n.y - cy).powi(2)).sqrt();
+        let hub = dist(&g.nodes[0]);
+        let others: f32 = g.nodes[1..].iter().map(|n| dist(n)).sum::<f32>() / 11.0;
+        assert!(
+            hub < others,
+            "环形布局下枢纽离中心 {hub} 应小于其他节点平均距离 {others}"
+        );
+    }
+
+    // ------------------------------------------------ 预计算坐标（构建期产物）
+
+    #[test]
+    fn precomputed_positions_are_applied_to_the_matching_nodes() {
+        let nodes = vec![
+            ("a.md".to_string(), "A".to_string()),
+            ("b.md".to_string(), "B".to_string()),
+        ];
+        let links = vec![("a.md".to_string(), "b.md".to_string())];
+        let positions = vec![
+            GraphPosition {
+                path: "a.md".into(),
+                x: 111.0,
+                y: 222.0,
+            },
+            GraphPosition {
+                path: "b.md".into(),
+                x: 333.0,
+                y: 444.0,
+            },
+        ];
+        let g = build_graph_snapshot_with_positions(&nodes, &links, &positions);
+        assert_eq!(g.nodes.len(), 2);
+        let a = g.nodes.iter().find(|n| n.path == "a.md").unwrap();
+        assert_eq!(a.x, 111.0, "a.md 应使用预计算坐标");
+        assert_eq!(a.y, 222.0);
+        let b = g.nodes.iter().find(|n| n.path == "b.md").unwrap();
+        assert_eq!(b.x, 333.0);
+        assert_eq!(b.y, 444.0);
+        // 拓扑仍由当前输入现算，不受坐标来源影响。
+        assert_eq!(g.edges.len(), 1);
+        assert_eq!(g.nodes[0].degree, 1);
+    }
+
+    #[test]
+    fn precomputed_positions_fall_back_when_missing_or_invalid() {
+        let nodes = vec![
+            ("a.md".to_string(), "A".to_string()),
+            ("b.md".to_string(), "B".to_string()),
+            ("c.md".to_string(), "C".to_string()),
+        ];
+        let links = vec![("a.md".to_string(), "b.md".to_string())];
+        // b.md 缺坐标；c.md 坐标是 NaN；d.md 是产物里多出来的节点。
+        let positions = vec![
+            GraphPosition {
+                path: "a.md".into(),
+                x: 111.0,
+                y: 222.0,
+            },
+            GraphPosition {
+                path: "c.md".into(),
+                x: f32::NAN,
+                y: 444.0,
+            },
+            GraphPosition {
+                path: "d.md".into(),
+                x: 10.0,
+                y: 20.0,
+            },
+        ];
+        let g = build_graph_snapshot_with_positions(&nodes, &links, &positions);
+        assert_eq!(g.nodes.len(), 3, "产物里多出来的节点不应进入快照");
+        let a = g.nodes.iter().find(|n| n.path == "a.md").unwrap();
+        assert_eq!(a.x, 111.0, "有合法坐标的节点应使用预计算值");
+        for n in &g.nodes {
+            assert!(
+                n.x.is_finite() && n.y.is_finite(),
+                "{} 坐标必须是有限值",
+                n.path
+            );
+            assert!((0.0..=g.width).contains(&n.x), "{} x 越界", n.path);
+            assert!((0.0..=g.height).contains(&n.y), "{} y 越界", n.path);
+        }
+    }
+
+    #[test]
+    fn empty_precomputed_positions_still_produce_a_usable_snapshot() {
+        // 旧产物（schema v1）没有坐标字段：必须仍能出图，不白屏、不 panic。
+        let nodes = vec![
+            ("a.md".to_string(), "A".to_string()),
+            ("b.md".to_string(), "B".to_string()),
+        ];
+        let links = vec![("a.md".to_string(), "b.md".to_string())];
+        let g = build_graph_snapshot_with_positions(&nodes, &links, &[]);
+        assert_eq!(g.nodes.len(), 2);
+        assert_eq!(g.edges.len(), 1);
+        for n in &g.nodes {
+            assert!(n.x.is_finite() && n.y.is_finite(), "{} 坐标非法", n.path);
+            assert!((0.0..=g.width).contains(&n.x));
+            assert!((0.0..=g.height).contains(&n.y));
+        }
     }
 }

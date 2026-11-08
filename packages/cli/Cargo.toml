@@ -15,3 +15,5 @@ path = "src/main.rs"
 mkv-editors = { path = "../editors" }
 mkv-core = { workspace = true, features = ["native"] }
 anyhow.workspace = true
+# 参考 MCP 适配器（`mkv editors stub`）需要读写 JSON-RPC 报文
+serde_json.workspace = true

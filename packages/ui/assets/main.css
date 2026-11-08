@@ -858,6 +858,24 @@ body {
 .mkv-ref-unresolved { background: var(--mkv-surface-2); border-color: var(--mkv-danger); }
 .mkv-ref-unresolved .mkv-ref-card-head { color: var(--mkv-danger); }
 
+/* ---------- F-06 进阶项①：编辑器内「插入引用」入口 ---------- */
+.mkv-ref-insert {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 16px;
+  background: var(--mkv-surface);
+  border-bottom: 1px solid var(--mkv-border);
+  font-size: 12px;
+}
+.mkv-ref-insert-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mkv-ref-insert-pos { color: var(--mkv-text); font-family: var(--mkv-mono); }
+.mkv-ref-insert select { max-width: 320px; }
+/* 单元格 / 形状 / 段落旁的「引用」小按钮 */
+.mkv-ref-pick { flex: 0 0 auto; padding: 2px 6px; font-size: 11px; }
+.mkv-grid-cell-tools { display: flex; align-items: center; gap: 4px; }
+.mkv-grid-cell-tools input { flex: 1 1 auto; min-width: 0; }
+.mkv-word-shape { display: flex; align-items: flex-start; gap: 6px; }
+.mkv-word-shape .mkv-word-text { flex: 1 1 auto; min-width: 0; }
+
 /* ---- 插件上游升级提示（启动时检测，用户确认） ---- */
 .mkv-update-banner {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -870,3 +888,167 @@ body {
   border: 1px solid var(--mkv-border); border-radius: 6px; padding: 4px 6px;
 }
 .mkv-editor input { width: 100%; box-sizing: border-box; }
+
+/* ---------------- F-12 检索模式切换 ---------------- */
+.mkv-mode-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.mkv-mode-tab {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--mkv-text-muted);
+  background: var(--mkv-surface-2);
+  border: 1px solid var(--mkv-border);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+}
+.mkv-mode-tab:hover {
+  color: var(--mkv-text);
+  border-color: var(--mkv-accent);
+}
+.mkv-mode-active {
+  color: var(--mkv-accent);
+  background: var(--mkv-accent-soft);
+  border-color: var(--mkv-accent);
+  font-weight: 600;
+}
+/* 正则表达式写错时的即时提示（core 判定，不是 UI 自己跑正则） */
+.mkv-search-error {
+  margin-top: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--mkv-danger);
+  background: var(--mkv-surface-2);
+  border: 1px solid var(--mkv-danger);
+  border-radius: var(--mkv-radius);
+  word-break: break-all;
+}
+
+/* ---------------- F-07 多维过滤面板 ---------------- */
+.mkv-filter-panel {
+  flex: 0 0 auto;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 0 12px 8px;
+  background: var(--mkv-surface);
+  border-bottom: 1px solid var(--mkv-border);
+}
+.mkv-filter-summary {
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mkv-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.mkv-filter-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+.mkv-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mkv-filter-label {
+  font-size: 11px;
+  color: var(--mkv-text-muted);
+}
+.mkv-filter-hint,
+.mkv-filter-empty {
+  font-size: 11px;
+}
+.mkv-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.mkv-chip {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--mkv-text-muted);
+  background: var(--mkv-surface-2);
+  border: 1px solid var(--mkv-border);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+}
+.mkv-chip:hover {
+  border-color: var(--mkv-accent);
+}
+.mkv-chip-on {
+  color: var(--mkv-accent);
+  background: var(--mkv-accent-soft);
+  border-color: var(--mkv-accent);
+  font-weight: 600;
+}
+.mkv-filter-row {
+  display: flex;
+  gap: 6px;
+}
+.mkv-filter-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 8px;
+  font-family: var(--mkv-mono);
+  font-size: 12px;
+  color: var(--mkv-text);
+  background: var(--mkv-surface-2);
+  border: 1px solid var(--mkv-border);
+  border-radius: 6px;
+  outline: none;
+}
+.mkv-filter-input:focus {
+  color: var(--mkv-text);
+  background: var(--mkv-surface);
+  border-color: var(--mkv-accent);
+}
+.mkv-filter-date {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.mkv-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+  font-size: 11px;
+}
+
+/* ---------------- 结果项：标签 / 最后修改时间 / 命中高亮 ---------------- */
+.mkv-result-time {
+  flex: 0 0 auto;
+}
+.mkv-result-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.mkv-tag {
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--mkv-accent);
+  background: var(--mkv-accent-soft);
+  border-radius: 999px;
+}
+.mkv-result-snippet {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mkv-text-muted);
+  word-break: break-word;
+}
+/* 正则命中段（core 用哨兵字符标出，UI 只负责渲染） */
+.mkv-mark {
+  padding: 0 2px;
+  color: var(--mkv-text);
+  background: var(--mkv-accent-soft);
+  border-radius: 3px;
+}

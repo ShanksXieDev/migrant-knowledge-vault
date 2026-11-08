@@ -137,13 +137,19 @@ impl Vault {
                 content_hash,
             });
 
+            // F-07：标签写入索引与元数据库（tags 表此前有表无数据）。
+            let tags = crate::tags::extract_tags(&parsed.text, &doc.dir, doc.format);
+
             // 写入全文索引
             self.index.upsert(&IndexDocument {
                 path: doc.path.clone(),
                 title: doc.title().to_string(),
                 content: parsed.text.clone(),
                 format: format!("{:?}", doc.format),
+                modified_at: doc.modified_at,
+                tags: tags.clone(),
             })?;
+            self.meta.set_tags(&doc.path, &tags)?;
 
             link_count += parsed.links.len();
             pending.push((
@@ -178,6 +184,12 @@ impl Vault {
         self.meta
             .set_state("domain_dict_hash", &self.index.domain_dict_hash())?;
 
+        // F-06 进阶：重建引用源片段快照基线。
+        // 全量重建 = 「我确认已看到当前内容」，因此此刻的源片段成为新基线；
+        // 之后的增量修改（文件监听 / 编辑保存）不会刷新基线，
+        // 于是源文件被改动时，引用卡片能给出「源已变更」的行级差异。
+        self.refresh_reference_snapshots()?;
+
         if let Some(cb) = progress.as_mut() {
             cb(IndexProgress {
                 total,
@@ -206,14 +218,24 @@ impl Vault {
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| rel_path.to_string());
+        let dir = match rel_path.rfind('/') {
+            Some(idx) => rel_path[..idx].to_string(),
+            None => String::new(),
+        };
+
+        // F-07：增量更新同样要刷新标签，否则标签与正文会漂移。
+        let tags = crate::tags::extract_tags(&parsed.text, &dir, format);
 
         self.index.upsert(&IndexDocument {
             path: rel_path.to_string(),
             title: title.clone(),
             content: parsed.text.clone(),
             format: format!("{format:?}"),
+            modified_at: self.storage.modified_at(rel_path)?.unwrap_or(0),
+            tags: tags.clone(),
         })?;
         self.index.commit()?;
+        self.meta.set_tags(rel_path, &tags)?;
 
         let size = self.storage.file_size(rel_path)?.unwrap_or(0);
         let modified_at = self.storage.modified_at(rel_path)?.unwrap_or(0);
@@ -377,6 +399,76 @@ impl Vault {
         self.index.search(query, limit)
     }
 
+    /// 按查询对象检索（F-12 正则模式 + F-07 多维过滤）。
+    ///
+    /// 正则模式在**原文**上匹配：Tantivy 的分词索引无法承载「跨词的正则」，
+    /// 因此正则检索走「候选集 + 原文精筛」两段式——
+    /// 先用 Tantivy 取一批候选（保证相关度排序），再用正则逐条在原文中匹配。
+    /// 候选集取 `limit * 4`（下限 50）以覆盖正则筛掉的部分。
+    pub fn search_query(&self, query: &crate::query::SearchQuery) -> Result<Vec<SearchHit>> {
+        if query.is_blank() {
+            return Ok(Vec::new());
+        }
+        let hits = match query.mode {
+            crate::query::QueryMode::Terms => self.index.search(&query.text, query.limit)?,
+            crate::query::QueryMode::Regex => {
+                let re = crate::regex::Regex::new(&query.text)
+                    .map_err(|e| Error::Config(format!("正则表达式无效: {e}")))?;
+                let candidate_limit = query.limit.saturating_mul(4).max(50);
+                let candidates = self.index.search(&query.text, candidate_limit)?;
+                let mut out = Vec::new();
+                for mut hit in candidates {
+                    let Some(text) = self.read_document(&hit.path).ok() else {
+                        continue;
+                    };
+                    let Some(m) = re.find_at(&text, 0) else {
+                        continue;
+                    };
+                    // 命中位置与上下文写回摘要，便于 UI 直接显示
+                    hit.snippet = regex_snippet(&text, m.start, m.end);
+                    out.push(hit);
+                    if out.len() >= query.limit {
+                        break;
+                    }
+                }
+                out
+            }
+        };
+        Ok(self.apply_query_filter(hits, &query.filter))
+    }
+
+    /// 在结果上应用过滤器（F-07）。
+    pub fn apply_query_filter(
+        &self,
+        hits: Vec<SearchHit>,
+        filter: &crate::query::QueryFilter,
+    ) -> Vec<SearchHit> {
+        if filter.is_empty() {
+            return hits;
+        }
+        hits.into_iter()
+            .filter(|h| filter.matches(h, h.modified_at, |p| self.tags_of(p)))
+            .collect()
+    }
+
+    /// 某文档的标签（F-07）。
+    pub fn tags_of(&self, rel_path: &str) -> Vec<String> {
+        self.meta.get_tags(rel_path).unwrap_or_default()
+    }
+
+    /// 全部标签及文档数（F-07 过滤面板的候选项）。
+    pub fn all_tags(&self) -> Vec<(String, usize)> {
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for doc in self.meta.list_documents().unwrap_or_default() {
+            for tag in self.meta.get_tags(&doc.path).unwrap_or_default() {
+                *counts.entry(tag).or_insert(0) += 1;
+            }
+        }
+        let mut out: Vec<(String, usize)> = counts.into_iter().collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        out
+    }
+
     /// 文档反链（谁引用了我）。
     pub fn backlinks(&self, rel_path: &str) -> Result<Vec<LinkRecord>> {
         self.meta.backlinks(rel_path)
@@ -391,6 +483,78 @@ impl Vault {
     pub fn read_document(&self, rel_path: &str) -> Result<String> {
         let bytes = self.storage.read(rel_path)?;
         Ok(String::from_utf8_lossy(&bytes).to_string())
+    }
+
+    /// 只读访问底层存储。
+    ///
+    /// 供需要读**原始字节**的模块使用（流程图节点抽取要读 `.drawio` 的 XML
+    /// 与 `.vsdx` 的 zip 包，纯文本抽取拿不到这些信息）。
+    ///
+    /// 暴露成 `&dyn Storage` 而不是具体类型，是为了不把「本地文件系统」
+    /// 这一实现细节泄漏到调用方。
+    pub fn storage(&self) -> &dyn Storage {
+        self.storage.as_ref()
+    }
+
+    /// 跨格式引用视图（F-06），带流程图节点定位（F-11）与源变更差异（F-06 进阶）。
+    ///
+    /// 每次调用都重新读取源文件，因此源更新后卡片内容会随之刷新。
+    pub fn references(&self, rel_path: &str) -> Result<Vec<crate::refs::ReferenceView>> {
+        let Ok(source) = self.read_document(rel_path) else {
+            return Ok(Vec::new());
+        };
+        // 没有引用语法的文档不必扫全库（引用解析要读全库正文与节点清单，代价不低）。
+        if crate::refs::parse_references(&source).is_empty() {
+            return Ok(Vec::new());
+        }
+        let (all, node_map) = self.reference_sources()?;
+        let snapshots = self.meta.list_ref_snapshots().unwrap_or_default();
+        Ok(crate::refs::build_reference_views_with_snapshots(
+            &source,
+            &all,
+            &node_map,
+            &snapshots,
+        ))
+    }
+
+    /// 汇总全库正文与流程图节点清单（引用解析的公共输入）。
+    fn reference_sources(
+        &self,
+    ) -> Result<(
+        Vec<(String, String, Format)>,
+        std::collections::HashMap<String, Vec<crate::diagram::DiagramNode>>,
+    )> {
+        let mut all: Vec<(String, String, Format)> = Vec::new();
+        let mut node_targets: Vec<(String, Format)> = Vec::new();
+        for d in self.documents()? {
+            let Ok(text) = self.read_document(&d.path) else {
+                continue;
+            };
+            let format = Format::from_path(Path::new(&d.path)).unwrap_or(Format::Markdown);
+            node_targets.push((d.path.clone(), format));
+            all.push((d.path.clone(), text, format));
+        }
+        let node_map = crate::diagram::build_node_map(self.storage.as_ref(), &node_targets);
+        Ok((all, node_map))
+    }
+
+    /// 重建引用源片段快照基线。
+    ///
+    /// 只在**全量重建**时调用：此刻的源片段内容即成为「上次看到的内容」。
+    /// 增量更新不刷新基线，源文件因此被改动时能被识别为变更。
+    pub fn refresh_reference_snapshots(&mut self) -> Result<usize> {
+        let (all, node_map) = self.reference_sources()?;
+        self.meta.clear_ref_snapshots()?;
+        let mut count = 0usize;
+        for (_path, text, _format) in &all {
+            let sources = crate::refs::resolve_reference_sources(text, &all, &node_map);
+            for (target, selector, current) in sources {
+                let key = crate::refs::snapshot_key(&target, &selector);
+                self.meta.set_ref_snapshot(&key, &current)?;
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
     /// 列出全部文档记录。
@@ -570,6 +734,13 @@ pub fn unresolved_links(from_path: &str, links: &[ExtractedLink], granularity: &
         .collect()
 }
 
+/// 生成正则命中处的上下文摘要。
+///
+/// 命中前后各取一定字符数，换行压成空格，保证 UI 单行显示不串行。
+fn regex_snippet(text: &str, start: usize, end: usize) -> String {
+    crate::query::regex_snippet(text, start, end)
+}
+
 /// 扫描结果到索引文档的辅助转换。
 pub fn scanned_to_index_document(doc: &ScannedDoc, content: String) -> IndexDocument {
     IndexDocument {
@@ -577,6 +748,8 @@ pub fn scanned_to_index_document(doc: &ScannedDoc, content: String) -> IndexDocu
         title: doc.title().to_string(),
         content,
         format: format!("{:?}", doc.format),
+        modified_at: doc.modified_at,
+        tags: crate::tags::extract_tags("", &doc.dir, doc.format),
     }
 }
 

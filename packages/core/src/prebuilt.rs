@@ -56,6 +56,20 @@ pub struct PrebuiltDoc {
     /// schema 版本保持不变（v1）。
     #[serde(default)]
     pub refs: Vec<crate::refs::ReferenceView>,
+    /// 文档标签（F-07 标签过滤）。
+    ///
+    /// `#[serde(default)]`：旧产物没有该字段时解析为空数组，
+    /// 标签过滤面板因此不显示候选（而不是显示错误的结果）。
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// 流程图节点清单（F-11：Visio / Drawio 节点级引用）。
+    ///
+    /// 只有流程图格式才有内容，其余格式为空数组。
+    ///
+    /// `#[serde(default)]`：旧产物没有该字段时解析为空数组，
+    /// 节点级引用退回到「页 / 段」级匹配，语义不丢。
+    #[serde(default)]
+    pub nodes: Vec<crate::diagram::DiagramNode>,
 }
 
 /// 一个词条及其倒排表。
@@ -91,6 +105,16 @@ pub struct PrebuiltIndex {
     pub links: Vec<LinkRecord>,
     /// 倒排表。
     pub postings: Vec<Posting>,
+    /// 图谱节点坐标（F-10，**构建期预计算**）。
+    ///
+    /// 由 native 侧的力导向布局在导出索引时算好，随产物一起发布；
+    /// Web（wasm32）端运行期只查表，不再执行 240 轮浮点迭代，
+    /// 也不必把布局引擎带进 wasm 产物。
+    ///
+    /// `#[serde(default)]`：schema v1 旧产物没有该字段时解析为空数组，
+    /// 运行期退回确定性环形布局（图谱面板照常渲染，不白屏）。
+    #[serde(default)]
+    pub graph_positions: Vec<crate::locate::GraphPosition>,
 }
 
 impl PrebuiltIndex {
@@ -103,6 +127,7 @@ impl PrebuiltIndex {
             docs: Vec::new(),
             links: Vec::new(),
             postings: Vec::new(),
+            graph_positions: Vec::new(),
         }
     }
 
@@ -265,9 +290,80 @@ impl PrebuiltIndex {
                     format: doc.format.clone(),
                     score: score as f32,
                     snippet: make_snippet(&doc.text, query),
+                    modified_at: doc.modified_at,
+                    tags: doc.tags.clone(),
                 })
             })
             .collect()
+    }
+
+    /// 按查询对象检索（F-12 正则模式 + F-07 多维过滤）。
+    ///
+    /// 与 Native 端语义一致：
+    /// - 普通模式走倒排表；
+    /// - 正则模式在**原文**上匹配（预构建索引本就存了 `text`，可直接扫）；
+    /// - 过滤在结果上做，三端判定函数共用。
+    pub fn search_query(&self, query: &crate::query::SearchQuery) -> Vec<SearchHit> {
+        if query.is_blank() {
+            return Vec::new();
+        }
+        let hits = match query.mode {
+            crate::query::QueryMode::Terms => self.search(&query.text, query.limit),
+            crate::query::QueryMode::Regex => {
+                let Ok(re) = crate::regex::Regex::new(&query.text) else {
+                    return Vec::new();
+                };
+                let mut out = Vec::new();
+                for doc in &self.docs {
+                    let Some(m) = re.find_at(&doc.text, 0) else {
+                        continue;
+                    };
+                    out.push(SearchHit {
+                        path: doc.path.clone(),
+                        title: doc.title.clone(),
+                        format: doc.format.clone(),
+                        // 正则模式没有词频统计，用命中数当分数（越高越靠前）
+                        score: re.find_all(&doc.text, 0).len() as f32,
+                        snippet: regex_snippet(&doc.text, m.start, m.end),
+                        modified_at: doc.modified_at,
+                        tags: doc.tags.clone(),
+                    });
+                    if out.len() >= query.limit {
+                        break;
+                    }
+                }
+                out
+            }
+        };
+
+        if query.filter.is_empty() {
+            return hits;
+        }
+        hits.into_iter()
+            .filter(|h| query.filter.matches(h, h.modified_at, |p| self.tags_of(p)))
+            .collect()
+    }
+
+    /// 某文档的标签（F-07）。
+    pub fn tags_of(&self, rel_path: &str) -> Vec<String> {
+        self.docs
+            .iter()
+            .find(|d| d.path == rel_path)
+            .map(|d| d.tags.clone())
+            .unwrap_or_default()
+    }
+
+    /// 全部标签及文档数（F-07 过滤面板候选项）。
+    pub fn all_tags(&self) -> Vec<(String, usize)> {
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for doc in &self.docs {
+            for tag in &doc.tags {
+                *counts.entry(tag.clone()).or_insert(0) += 1;
+            }
+        }
+        let mut out: Vec<(String, usize)> = counts.into_iter().collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        out
     }
 
     /// 读取文档正文。
@@ -312,7 +408,20 @@ impl PrebuiltIndex {
                 (d.path.clone(), d.text.clone(), format)
             })
             .collect();
-        crate::refs::build_reference_views(&doc.text, &all)
+        // F-11：节点清单随产物打包，旧产物没有该字段时退回到页 / 段级匹配。
+        let node_map = self.node_map();
+        crate::refs::build_reference_views_with_nodes(&doc.text, &all, &node_map)
+    }
+
+    /// 全部文档的流程图节点清单（F-11）。
+    pub fn node_map(&self) -> std::collections::HashMap<String, Vec<crate::diagram::DiagramNode>> {
+        let mut map = std::collections::HashMap::new();
+        for d in &self.docs {
+            if !d.nodes.is_empty() {
+                map.insert(d.path.clone(), d.nodes.clone());
+            }
+        }
+        map
     }
 
     /// 检索命中的精确位置（PRD §7.1）。
@@ -321,6 +430,10 @@ impl PrebuiltIndex {
     }
 
     /// 双链图谱快照（F-10）。
+    ///
+    /// 坐标优先用**构建期预计算**的结果（[`Self::graph_positions`]）；
+    /// 旧产物（schema v1）没有坐标时退回确定性环形布局。
+    /// 因此 Web（wasm32）端运行期不做任何浮点布局迭代。
     pub fn graph_snapshot(&self) -> crate::locate::GraphSnapshot {
         let nodes: Vec<(String, String)> = self
             .docs
@@ -333,7 +446,7 @@ impl PrebuiltIndex {
             .filter(|l| !l.to_path.is_empty())
             .map(|l| (l.from_path.clone(), l.to_path.clone()))
             .collect();
-        crate::locate::build_graph_snapshot(&nodes, &links)
+        crate::locate::build_graph_snapshot_with_positions(&nodes, &links, &self.graph_positions)
     }
 
     /// 反链。
@@ -353,6 +466,14 @@ impl PrebuiltIndex {
             .cloned()
             .collect()
     }
+}
+
+/// 生成正则命中处的上下文摘要。
+///
+/// 与 Native 端 `vault::regex_snippet` 同语义：命中前后各取一定字符数，
+/// 换行压成空格，保证 UI 单行显示不串行。
+fn regex_snippet(text: &str, start: usize, end: usize) -> String {
+    crate::query::regex_snippet(text, start, end)
 }
 
 /// 生成命中摘要：截取查询词附近的上下文。
@@ -419,6 +540,25 @@ impl crate::service::KnowledgeService for PrebuiltService {
 
     fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {
         self.index.search(query, limit)
+    }
+
+    fn search_query(&self, query: &crate::query::SearchQuery) -> Vec<SearchHit> {
+        self.index.search_query(query)
+    }
+
+    fn validate_query(&self, query: &crate::query::SearchQuery) -> Option<String> {
+        if query.mode != crate::query::QueryMode::Regex {
+            return None;
+        }
+        crate::regex::Regex::new(&query.text).err()
+    }
+
+    fn tags_of(&self, rel_path: &str) -> Vec<String> {
+        self.index.tags_of(rel_path)
+    }
+
+    fn all_tags(&self) -> Vec<(String, usize)> {
+        self.index.all_tags()
     }
 
     fn read_document(&self, rel_path: &str) -> Option<String> {
@@ -511,6 +651,8 @@ mod tests {
                     text: "模流分析是注塑成型前的重要仿真手段，用于评估浇口位置与熔接线位置。".into(),
                     segments: Vec::new(),
                     refs: Vec::new(),
+                    tags: Vec::new(),
+                    nodes: Vec::new(),
                 },
                 PrebuiltDoc {
                     path: "b.md".into(),
@@ -521,6 +663,8 @@ mod tests {
                     text: "注射速度与熔体温度的基线取值，用于工艺评审。".into(),
                     segments: Vec::new(),
                     refs: Vec::new(),
+                    tags: Vec::new(),
+                    nodes: Vec::new(),
                 },
             ],
             links: vec![LinkRecord {
@@ -561,6 +705,7 @@ mod tests {
                     tf: vec![1],
                 },
             ],
+            graph_positions: Vec::new(),
         }
     }
 
@@ -656,5 +801,43 @@ mod tests {
         assert_eq!(g.nodes.len(), 2);
         assert_eq!(g.edges.len(), 1, "b.md → a.md 一条边");
         assert!(g.nodes.iter().any(|n| n.path == "a.md"));
+    }
+
+    #[test]
+    fn legacy_index_without_graph_positions_still_renders_graph() {
+        // schema v1 旧产物没有 graph_positions 字段（远端热替换也可能拿到旧产物）：
+        // serde default 为空数组 → 运行期退回环形布局，图谱照常渲染，不白屏。
+        let idx = sample_index();
+        let mut value: serde_json::Value =
+            serde_json::from_str(&idx.to_json().unwrap()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("graph_positions");
+        let legacy = PrebuiltIndex::from_json(&value.to_string()).unwrap();
+        assert!(legacy.graph_positions.is_empty());
+
+        let g = legacy.graph_snapshot();
+        assert_eq!(g.nodes.len(), 2, "旧产物仍应出图");
+        assert_eq!(g.edges.len(), 1);
+        for n in &g.nodes {
+            assert!(n.x.is_finite() && n.y.is_finite(), "{} 坐标非法", n.path);
+            assert!((0.0..=g.width).contains(&n.x));
+            assert!((0.0..=g.height).contains(&n.y));
+        }
+    }
+
+    #[test]
+    fn graph_snapshot_uses_precomputed_positions() {
+        let mut idx = sample_index();
+        idx.graph_positions = vec![crate::locate::GraphPosition {
+            path: "a.md".into(),
+            x: 123.0,
+            y: 456.0,
+        }];
+        let g = idx.graph_snapshot();
+        let a = g.nodes.iter().find(|n| n.path == "a.md").unwrap();
+        assert_eq!(a.x, 123.0, "a.md 应使用构建期预计算的坐标");
+        assert_eq!(a.y, 456.0);
     }
 }

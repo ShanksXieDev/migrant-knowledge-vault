@@ -23,6 +23,8 @@ use mkv_core::vault::Vault;
 use std::path::PathBuf;
 use std::time::Duration;
 
+mod stub;
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("[mkv] 错误: {e:#}");
@@ -90,6 +92,10 @@ fn print_help() {
   mkv editors confirm <root>    无 GUI 时确认升级全部待更新插件
   mkv editors skip <root>       跳过当前检测到的上游版本
   mkv editors upgrade <root>    同步用户已确认的上游 rev 并清除待重建标记
+  mkv editors backend <root>   查看各插件后端（builtin / external）与健康状态
+       --set <插件ID> --kind external --command <上游命令> [--arg <参数>...]
+                            切换某个插件的后端（逐插件生效）
+  mkv editors stub             参考 MCP 适配器（进程外后端的可运行样板）
 "#
     );
 }
@@ -203,10 +209,105 @@ fn cmd_editors(rest: &[String]) -> Result<()> {
             );
             Ok(())
         }
+        "backend" => cmd_editors_backend(&rest[1..]),
+        "stub" => {
+            // 参考 MCP 适配器：进程外后端的可运行样板。
+            // 用法：mkv editors stub --serve-mcp
+            crate::stub::run().context("参考适配器运行失败")?;
+            Ok(())
+        }
         other => {
-            anyhow::bail!("未知的 editors 子命令: {other}（可用 plugins / check / upgrade）")
+            anyhow::bail!("未知的 editors 子命令: {other}（可用 plugins / check / upgrade / backend / stub）")
         }
     }
+}
+
+/// 查看 / 切换编辑器后端（架构闭环的配置面）。
+///
+/// 用法：
+/// ```text
+/// mkv editors backend <root>                          # 列出各插件后端 + 真实健康检查
+/// mkv editors backend <root> --set gridcraft --kind external --command gridcraft-mcp
+/// mkv editors backend <root> --set gridcraft --kind builtin
+/// ```
+fn cmd_editors_backend(rest: &[String]) -> Result<()> {
+    use mkv_core::editor_updates as updates;
+
+    let root = root_arg(rest)?;
+    let mut set_id: Option<String> = None;
+    let mut kind: Option<String> = None;
+    let mut command: Option<String> = None;
+    let mut args: Vec<String> = Vec::new();
+    let mut reason = String::new();
+
+    let mut i = 1usize;
+    while i < rest.len() {
+        match rest[i].as_str() {
+            "--set" => {
+                set_id = rest.get(i + 1).cloned();
+                i += 2;
+            }
+            "--kind" => {
+                kind = rest.get(i + 1).cloned();
+                i += 2;
+            }
+            "--command" => {
+                command = rest.get(i + 1).cloned();
+                i += 2;
+            }
+            "--arg" => {
+                if let Some(a) = rest.get(i + 1) {
+                    args.push(a.clone());
+                }
+                i += 2;
+            }
+            "--reason" => {
+                reason = rest.get(i + 1).cloned().unwrap_or_default();
+                i += 2;
+            }
+            other => anyhow::bail!("未知的 backend 参数: {other}"),
+        }
+    }
+
+    if let Some(id) = set_id {
+        let kind = kind.unwrap_or_else(|| "builtin".to_string());
+        let lock = mkv_editors::set_backend(
+            &root,
+            &id,
+            &kind,
+            command.as_deref().unwrap_or_default(),
+            &args,
+            &reason,
+        )?;
+        let pin = lock.backend_of(&id);
+        println!("已把插件 {id} 的后端切换为 {}", pin.kind);
+        if pin.kind == "external" {
+            println!("  上游命令: {} {}", pin.command, pin.args.join(" "));
+            println!("  生效方式: 重启应用（Desktop / CLI 启动时按后端配置注入插件）");
+        }
+        return Ok(());
+    }
+
+    let lock = updates::load_state(&root);
+    println!("编辑器后端（来自 {}）：", updates::state_path(&root).display());
+    for h in mkv_editors::backend_health(&lock) {
+        let state = if h.available { "可用" } else { "不可用" };
+        println!(
+            "  {:<10} kind={:<8} {:<6} version={}",
+            h.id,
+            h.kind.as_str(),
+            state,
+            if h.version.is_empty() { "-" } else { &h.version }
+        );
+        if !h.reason.is_empty() {
+            println!("             原因: {}", h.reason);
+        }
+    }
+    println!();
+    println!("切换后端：");
+    println!("  mkv editors backend <root> --set <插件ID> --kind external --command <上游命令> [--arg <参数>...]");
+    println!("  mkv editors backend <root> --set <插件ID> --kind builtin");
+    Ok(())
 }
 
 // ------------------------------------------------------------------ 参数

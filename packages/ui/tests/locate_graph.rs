@@ -66,6 +66,8 @@ impl KnowledgeService for LocateGraphService {
             format: "Markdown".into(),
             score: 1.0,
             snippet: "第三段讲模流分析与浇口位置。".into(),
+            modified_at: 1,
+            tags: Vec::new(),
         }]
     }
 
