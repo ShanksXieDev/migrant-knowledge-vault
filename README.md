@@ -21,7 +21,7 @@ v0.1 工程脚手架：**Rust 核心库 + Dioxus 三端（Desktop / Web / Mobile
 | 反链 / 出链 | ✅  | 目标解析支持路径、文件名、主干、标题四级匹配                                         |
 | Git 版本  | ✅  | 提交、历史、差异、回滚；`.kbindex/` 自动忽略                                   |
 | 内置编辑器   | ✅  | GridCraft（Excel）/ DeckCraft（PPT 完整编辑）/ WordCraft（Word），始终读写原生文件 |
-| Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**真实浏览器 28/28 项验证通过** |
+| Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**本地与线上各 28/28 项真实浏览器验证通过** |
 | 文件监听    | ✅  | `notify` 增量索引 + 双链重算；实测索引 51ms、端到端 175ms（PRD 要求 1s 内）        |
 | 静态发布 / CI | ✅  | 6 文件纯静态站点；CI 门禁 + Pages 自动发布；wasm 经 wasm-opt 压到约 705KB（[线上站点](https://shanksxiedev.github.io/migrant-knowledge-vault/)） |
 | UI 自动刷新 | ✅  | 索引修订号 + 250ms 轮询，文档列表 / 反链 / 检索结果自动重渲染 |
@@ -358,7 +358,7 @@ B5–B7 为 F-10 关系图谱（节点与边渲染、缩放、点选跳转），
 C1–C3 为 F-06 跨格式引用（内联源片段内容 / 刷新 / 点选跳到源文档并定位）。
 截图与 JSON 报告落在 `docs/browser-validation/`（本轮：`f06/`）。
 
-**已验证结果（2026-11-08 下午）**：**28/28 全通过**，0 console error、0 未捕获异常。
+**已验证结果（2026-11-08 下午）**：本地静态站点与线上 Pages 站点**各 28/28 全通过**，0 console error、0 未捕获异常；线上报告 `docs/browser-validation/pages-live-f06/`。
 
 ---
 
@@ -461,7 +461,7 @@ HTTP 500 回落、空索引回落、顶栏知识库名同步。报告：`docs/br
 | 依赖 | wasm32 依赖树零 `tantivy / jieba / zstd / rusqlite / git2 / notify / cc` |
 | 构建 | `scripts/publish-web.sh` + 产物清单校验 + **wasm < 800KB 体积门禁** |
 | 浏览器 | `dist/` 起静态服务 → Playwright Chromium 跑 28 项交互回归 |
-| 发布 | main 分支自动 `actions/deploy-pages`（run #7 / #8 / #9 连续实测 success）；PR 只验证不发布 |
+| 发布 | main 分支自动 `actions/deploy-pages`（run #7–#11 连续实测 success）；PR 只验证不发布 |
 
 CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—— Windows MSVC 的
 `link.exe` 链接 proc-macro DLL 会挂起，源码编译不可靠。
@@ -513,6 +513,19 @@ warning、不影响 `verify` 门禁；配置后 `actions/deploy-pages@v4` 自动
 报告与截图：`docs/browser-validation/pages-live-ab/`。
 至此 #6 / #7 / #8 / #9 连续 success，功能迭代后自动发布闭环依然稳定。
 
+**F-06 上线复核（run #11，提交 `dc2067c`）**：跨格式引用推送后，
+**run #11 `42452731879` Success**（约 3 分钟）—— `verify` job 全部必需步骤 success
+（139 项测试 / 移动端编译 / wasm32 零 C 依赖 / release 构建 / 产物清单 + `wasm < 800KB` 门禁 /
+Playwright Chromium 28 项交互回归 / 上传 Pages 产物），`deploy` job 的 `pages_check` 与
+`actions/deploy-pages@v4` 再次 success。线上 `deploy-info.json` 的 `generated_at`
+由 `05:27:09Z` 刷新为 `05:59:01Z`，`wasm_optimization` 记录
+`1,239,166B → 706,213B`（CI/Linux；本地 Windows 为 `1,291,799B → 705,285B`），
+`mkv-index.json` 19,464B（含 `refs`，9 docs / 12 links / 212 postings；示例文档 4 条引用
+全部 `resolved = true`）；首页 / 索引 / 元数据 / `.nojekyll` 全部 HTTP 200。
+对**线上 URL** 用系统 Edge 跑完整 **28/28 全通过**（含 C1–C3 引用卡片 / 刷新 / 点选跳转），
+0 console error、0 page error、6.32s，报告与截图：`docs/browser-validation/pages-live-f06/`。
+至此 #7–#11 连续 success，第 5 次实测「push main → 自动重新发布」闭环稳定。
+
 ### 12.7 wasm 体积优化（wasm-opt）
 
 `dx build --release` 默认 `--debug-symbols=true`，产物里带大量 DWARF 调试段；
@@ -535,8 +548,9 @@ warning、不影响 `verify` 门禁；配置后 `actions/deploy-pages@v4` 自动
 > Windows / Git Bash 注意：shell 传给 Python 的是 `/c/...` POSIX 路径，
 > 需在 Python 侧转成 `C:/...` 并补 `.exe` 后缀，否则会误判「未找到 wasm-opt」（本轮实测踩过）。
 
-> **F-06 之后**：新增引用解析与示例文档，本地 wasm 1,291,799B → **705,285B（-45.4%）**，
-> 仍低于 800KB 门禁；索引 JSON 因新增 `refs` 字段从 14,174B 增至 19,464B。
+> **F-06 之后**：新增引用解析与示例文档，本地 wasm 1,291,799B → **705,285B（-45.4%）**、
+> CI/Linux 1,239,166B → **706,213B**；仍低于 800KB 门禁（run #11 实测通过）；
+> 索引 JSON 因新增 `refs` 字段从 14,174B 增至 19,464B。
 
 ---
 
@@ -650,9 +664,10 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 > 2026-11-08：技术债务已清理，P0 文件监听、P1 静态发布（方案 A）+ CI 门禁、
 > Desktop UI 自动刷新与 F-08 外部唤起均已落地。代码已推送到 GitHub，
 > **CI 真实首跑已核对**并修掉 dx 校验和、wasm strip 等 Linux 专属问题（复盘见 §12.5）。
-> **Pages 自动发布已闭环**：run #7 的 `deploy-pages` 实测 success；run #9 复核 A/B 上线后
-> 站点 <https://shanksxiedev.github.io/migrant-knowledge-vault/> **25/25 项回归全绿**（§12.6）。
+> **Pages 自动发布已闭环**：run #7 的 `deploy-pages` 实测 success；run #11 复核 F-06 上线后
+> 站点 <https://shanksxiedev.github.io/migrant-knowledge-vault/> **28/28 项回归全绿**（§12.6）。
 > **A + B 均已完成**（§12.7 / §13.4 / §13.5）：wasm 本地 1,245,191B → 667,161B（-46.4%）、
 > CI 1,192,134B → 667,487B；检索结果精确定位与 F-10 双链图谱落地；
-> **F-06 跨格式引用已完成**（§13.6）：引用处内联源片段、刷新与点选跳转；
-> **139 项测试 + 本地 28/28 项浏览器回归全绿**；线上结论随本次 main 推送的 CI 复核回填。
+> **F-06 跨格式引用已完成并上线**（§13.6）：引用处内联源片段、刷新与点选跳转；
+> **139 项测试 + 本地 28/28、线上 28/28 项浏览器回归全绿**（run #11 `42452731879` Success，
+> #7–#11 连续 success）；线上结论已回填。
