@@ -162,6 +162,15 @@ def main() -> int:
     print(f"文件大小    : {os.path.getsize(path):,} bytes")
     print(f"代码段总计  : {total:,} bytes / {len(code)} 个函数")
     print(f"未命名函数  : {unknown:,} bytes")
+    if unknown and not buckets:
+        print()
+        print("!! 该 wasm 里没有 `name` 自定义段，无法归因。")
+        print("!! 常见原因：这是 **wasm-bindgen CLI 的输出**（它会剥离 name 段），")
+        print("!! 而本脚本只能对 **cargo 原始产物** 生效：")
+        print("!!   cargo build --release --target wasm32-unknown-unknown -p mkv-web")
+        print("!!   python scripts/wasm-size-by-name.py \\")
+        print("!!     target/wasm32-unknown-unknown/release/mkv-web.wasm")
+        return 2
     print()
     print("== 按模块归因 ==")
     for label, size in buckets.most_common():

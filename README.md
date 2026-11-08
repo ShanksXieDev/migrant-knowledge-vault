@@ -703,9 +703,16 @@ wasm 体积门禁是 **800,000 B** 的硬约束。本轮新增五项功能后一
 - `scripts/wasm-size-by-name.py`：解析 wasm 的 `name` 自定义段拿到
   「函数下标 → 函数名」，再与 `code` 段的函数体大小对齐，按模块路径归因。
   （旧的 DWARF 归因脚本在本项目的 rustc 输出上 99.9% 落到 unknown，已移除。）
+  > ⚠️ **必须对 `cargo` 的原始产物运行**，即
+  > `cargo build --release --target wasm32-unknown-unknown -p mkv-web` 后的
+  > `target/wasm32-unknown-unknown/release/mkv-web.wasm`。
+  > **wasm-bindgen CLI 的输出里 `name` 段已被剥离**（实测段结构中只剩
+  > `__wasm_bindgen_unstable` / `producers` / `target_features` 三个自定义段），
+  > 此时所有函数都会落到「未命名」，归因结果毫无意义。
+  > 对照：`cargo` 原始产物的 `name` 段约 418 KB，`wasm-bindgen` 输出为 0。
 - **消融测量法**：改一项配置 → 重新构建 → 用同一套参数跑 `wasm-opt` → 比对字节数。
 
-归因结论（cargo wasm，未优化 3.31 MB）：
+归因结论（治理前基线：cargo wasm，未优化 3.31 MB）：
 
 | 桶 | 字节 | 说明 |
 |---|--:|---|
@@ -713,6 +720,20 @@ wasm 体积门禁是 **800,000 B** 的硬约束。本轮新增五项功能后一
 | `mkv_ui` | 213,926 | Dioxus 组件代码 |
 | `mkv_core::regex` | 12,269 | 自研正则引擎只有 12KB，**不是**体积元凶 |
 | `mkv_core::query` | 21,047 | 其中 `QueryFilter::clone` 单函数 10,131 B（派生 Clone 展开异常，已记录待优化） |
+
+治理后复测（同一脚本，fat LTO + 自有 crate `opt-level="z"`，raw 2.28 MB / 代码段 940,757 B）：
+
+| 桶 | 字节 | 占比 |
+|---|--:|---:|
+| `wasm_bindgen` | 250,499 | 26.6% |
+| `core`（dioxus / std 等） | 200,920 | 21.4% |
+| `mkv_ui` | 116,440 | 12.4% |
+| `mkv_core::editor` | 72,638 | 7.7% |
+| **`mkv_core::regex`** | **4,661** | **0.5%** |
+| `mkv_core::query` | 4,266 | 0.5% |
+
+两轮复测的结论一致：**自研正则引擎始终只占 0.5%~1%，从来不是体积元凶**——
+真正的问题是缺少 fat LTO。
 
 于是真正要动的不是业务代码，而是**编译配置**：
 
