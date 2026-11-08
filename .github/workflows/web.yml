@@ -56,9 +56,13 @@ jobs:
         run: |
           set -euo pipefail
           BASE="https://github.com/DioxusLabs/dioxus/releases/download/v${DX_VERSION}"
-          curl -fsSL -A "mkv-ci" "$BASE/dx-x86_64-unknown-linux-gnu.tar.gz" -o dx.tar.gz
+          ASSET="dx-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL -A "mkv-ci" "$BASE/$ASSET" -o dx.tar.gz
           curl -fsSL -A "mkv-ci" "$BASE/dx-x86_64-unknown-linux-gnu.sha256" -o dx.sha256
-          EXPECTED="$(cut -d' ' -f1 dx.sha256)"
+          # 官方 .sha256 同时列了 tar.gz 与 zip 两行；必须按文件名只取目标那一行，
+          # 否则 EXPECTED 会变成两行拼接的字符串，与实际 hash 永不相等（首跑即栽在这里）。
+          EXPECTED="$(awk -v f="$ASSET" '$2 == f { print $1 }' dx.sha256)"
+          [ -n "$EXPECTED" ] || { echo "sha256 清单中没有 $ASSET"; cat dx.sha256; exit 1; }
           ACTUAL="$(sha256sum dx.tar.gz | cut -d' ' -f1)"
           echo "expected=$EXPECTED"
           echo "actual  =$ACTUAL"
