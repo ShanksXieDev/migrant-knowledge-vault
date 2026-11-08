@@ -603,6 +603,77 @@ Playwright Chromium 28 项交互回归 / 上传 Pages 产物），`deploy` job �
 完整 **28/28 全通过**，0 console error、0 page error，报告与截图：
 `docs/browser-validation/pages-live-plugins/`。至此 #7–#12、#14 连续 success。
 
+**CI 兜底通道上线复核（run #23，提交 `0a6dffa` + `c720b5e`）**：这一轮先修了一个
+**误判的根因**，再补齐三条与 GitHub 完全无关的外部依赖兜底通道。
+
+*run #21 的真正根因不是「GitHub 下载失败」*：该步骤的注解里出现了
+「wasm-bindgen 预装失败」警告，而 wasm-bindgen 预装位于 dx 二进制下载**之后**——
+说明 dx 实际下载成功、binaryen 也预装成功，步骤是在最后三行才崩的。
+`303c2a4` 重构预装段时删掉了 `TARGET_DIR` 的**定义**，却留下了尾部的三行引用：
+
+```bash
+if [ -x "$TARGET_DIR/bin/wasm-opt" ]; then   # ← TARGET_DIR 已无定义
+```
+
+该步骤开头是 `set -euo pipefail`，未定义变量展开会直接以 `unbound variable`
+终止步骤并返回 1。表象是「安装 dx 失败」、后续门禁全部 skipped，
+而 `/tmp/mkv-ci.log` 又是空的（该步骤没有 tee 到日志），
+所以「汇总失败诊断」注解也查不到任何线索——三重误导叠在一起。
+修复：删除残留引用，统一用语义等价的 `$BIN_TARGET`。
+
+*三条兜底通道*（详见 §12.8）：dx 本体 → crates.io 源码编译；
+binaryen → apt 的 wasm-opt（**必须复制进 dx 缓存目录**，否则 dx 会自己去下载）；
+wasm-bindgen-cli → crates.io 源码编译。
+
+**run #22** 因修复推送触发并发组取消（`concurrency: pages` + `cancel-in-progress`）；
+**run #23 `42473188254` Success**（10:51:31Z → 10:57:07Z，5 分 36 秒）——
+`verify` 全部必需步骤 success（安装 dx / 全量测试 / 移动端编译 / wasm32 零 C 依赖 /
+release 构建 / 产物清单 + `wasm < 800KB` 门禁 / Playwright Chromium 28 项交互回归 /
+上传 Pages 产物），`deploy` job 的 `pages_check` 与 `actions/deploy-pages@v4` 均 success。
+
+run #23 的注解里有一条**实证**：
+
+```text
+[warning] wasm-bindgen 预装失败，改用 crates.io 源码编译
+```
+
+即 GitHub 通道这次真的失败了，crates.io 兜底**在真实 CI 中触发并救活了流水线**——
+不是纸面设计。
+
+线上 `deploy-info.json` 的 `generated_at` 刷新为 `10:56:26Z`，
+`wasm_optimization` 记录 `1,274,581B → 724,441B`（`-Oz --strip-debug`，
+wasm-opt `version 127 (version_127)`），`wasm_opt_issue = None`，
+`mkv-index.json` 19,464B，首页 / 索引 / 元数据 / `.nojekyll` 全部 HTTP 200。
+对**线上 URL** 用系统 Edge 跑完整 **28/28 全通过**，0 console error、0 page error，
+4.33s，报告与截图：`docs/browser-validation/pages-live-ci-fallback/`。
+
+### 12.8 CI 外部依赖的三条兜底通道
+
+CI 构建期要拉三类外部产物，它们过去全部托管在 `objects.githubusercontent.com`
+这一个 CDN 上，链路抖动就整条流水线报废（run #13 直链 504、run #21 前置排查期间双通道皆败）。
+现在每个依赖都有「主通道 + 与 GitHub 无关的备胎」：
+
+| 依赖 | 主通道 | 兜底通道 | 关键点 |
+|---|---|---|---|
+| dx 0.7.10 | release 直链 → `api.github.com` 资产（各 3 次重试，共用官方 sha256） | **crates.io 源码编译** `cargo install dioxus-cli --locked --no-default-features` | dioxus-cli 0.7.10 已发布 `Cargo.lock`，`--locked` 可用且解析可复现；`default` feature 集为空，`--no-default-features` 等价 |
+| binaryen（wasm-opt） | release 直链 → API 资产 → 整目录安装到 dx 缓存 | **apt 的 wasm-opt** | 必须复制进 `~/.dx/tools/binaryen-<索引号>/bin/`，只留在 PATH 上没用——dx 只认缓存目录，目录里没有它就会自己去 GitHub 下载 |
+| wasm-bindgen-cli | release 直链 → API 资产 | **crates.io 源码编译** `cargo install wasm-bindgen-cli --locked` | 版本号取自项目 `Cargo.lock`（dx 也是按项目锁文件决定装哪个版本），避免版本漂移导致 dx 重装 |
+
+两个容易被忽略的细节：
+
+1. **两个版本号不是一回事**。dx 二进制里硬编码 `wasm-opt129`（工具索引号 → 缓存目录名
+   `binaryen-129`）与 `binaryen-version_127`（上游 release tag → 下载 URL）。
+   混用会让 dx 认为「未安装」而重新下载（run #19 卡死根因）。
+2. **`CARGO_HOME` 可能不可写**。GitHub runner 的 `CARGO_HOME` 默认是 `/usr/local/cargo`
+   （镜像系统路径），普通用户未必有写权限，`cargo install` 会报 Permission denied。
+   因此 `cargo install` 统一走一个封装：先试默认路径，失败则换 `$HOME/.cargo` 重试，
+   并同步更新 `CARGO_BIN` / `PATH` / `DX_PATH`，保证「装到哪」和「后面去哪找」是同一个位置。
+
+配套的静态检查：把工作流里所有 `run` 块的变量引用与块内赋值做比对，
+可以稳定报出未定义变量（用 `303c2a4` 跑能复现 `$TARGET_DIR`，当前版本为 0）。
+这类 bug 在 CI 上表现为「莫名其妙的失败 + 空日志」，靠肉眼看日志极难定位，
+静态比对能在提交前就拦下来。
+
 ### 12.7 wasm 体积优化（wasm-opt）
 
 `dx build --release` 默认 `--debug-symbols=true`，产物里带大量 DWARF 调试段；
@@ -615,7 +686,8 @@ Playwright Chromium 28 项交互回归 / 上传 Pages 产物），`deploy` job �
 | 优化后 | **667,161 bytes（约 651 KB）** |
 | 压缩率 | **-46.4%** |
 | 插件化后（run #14，CI/Linux） | 1,274,581 bytes → **724,483 bytes（约 708 KB）**，仍低于 800KB 门禁 |
-| 工具来源 | 优先 dx 自动下载的 `~/.dx/tools/binaryen-*/bin/wasm-opt`（版本与 wasm-bindgen 产物匹配），PATH 上的 binaryen 仅作兜底 |
+| 兜底通道上线后（run #23，CI/Linux） | 1,274,581 bytes → **724,441 bytes（约 708 KB）**，`-Oz --strip-debug`，wasm-opt `version 127` |
+| 工具来源 | 本地优先 dx 自动下载的 `~/.dx/tools/binaryen-*/bin/wasm-opt`（版本与 wasm-bindgen 产物匹配），PATH 上的 binaryen 仅作兜底；CI 侧改为**预装进 dx 缓存目录**（含 apt 兜底，见 §12.8），避免构建期再联网 |
 | 失败策略 | 找不到工具 / 未产出更小产物 → 只警告并保留原始 wasm，绝不阻断本地发布；CI 的 `wasm < 800KB` 门禁会据此判定失败 |
 
 `deploy-info.json` 新增 `wasm_optimization` 记录前后体积与参数；CI 断言 wasm < 800 KB
@@ -631,7 +703,7 @@ Playwright Chromium 28 项交互回归 / 上传 Pages 产物），`deploy` job �
 >
 > **插件化之后**：编辑器实现移出 core，但新增契约层与启动升级横幅，
 > 本地 wasm 1,338,199B → **724,696B（-45.8%）**，仍低于 800KB 门禁（余量约 75KB）；
-> CI/Linux 数值随本次 main 推送的上线复核回填。
+> CI/Linux（run #23）1,274,581B → **724,441B**，同样过门禁。
 
 ---
 
@@ -742,6 +814,9 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 4. **F-10 图谱进阶**：力导向聚类、按标签着色、大库虚拟渲染
 5. **Node.js 20 警告**：CI 中 `actions/*` 的 Node 20 deprecation 提示，待官方迁移后评估升级
 6. **插件升级链路真机验收**：Desktop GUI 确认横幅、重建后重启生效的实际窗口行为
+7. **CI 兜底通道的常态化验证**：crates.io / apt 兜底目前只在 run #23 真实触发过一次
+   （wasm-bindgen），其余分支只经过本地仿真。可考虑做成一条可手动触发的 workflow，
+   强制走兜底路径，避免「平时不跑、要用时已经腐化」
 
 > 2026-11-08：技术债务已清理，P0 文件监听、P1 静态发布（方案 A）+ CI 门禁、
 > Desktop UI 自动刷新与 F-08 外部唤起均已落地。代码已推送到 GitHub，
@@ -759,3 +834,10 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 > CI/Linux wasm 1,274,581B → 724,483B 仍过 800KB 门禁）；
 > **CI 下载双通道已加固**（§12.6）：release 直链 504 时回退 `api.github.com` 资产通道，
 > 修掉 run #13 因 dx 二进制下载失败而全流水线跳过的问题。
+> **CI 兜底通道已补齐并上线**（§12.6 / §12.8）：先定位出 run #21 的真正根因是
+> **未定义变量 `$TARGET_DIR`**（重构时删了定义却留下引用，在 `set -u` 下终止步骤，
+> 表象却像「下载失败」，日志还恰好是空的，三重误导叠加）；
+> 随后为 dx / binaryen / wasm-bindgen 三类外部依赖各补一条与 GitHub 无关的链路
+> （crates.io 源码编译 / apt 兜底），**run #23 `42473188254` Success**，
+> 其中 wasm-bindgen 的 crates.io 兜底在真实 CI 中确实触发并救活了流水线；
+> 线上 28/28 项浏览器回归全绿，CI/Linux wasm 1,274,581B → 724,441B。
