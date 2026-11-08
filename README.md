@@ -407,7 +407,8 @@ cargo run -p mkv-cli -- watch D:/MyVault --debounce 200 --auto-commit
 ```bash
 scripts/publish-web.sh [vault_dir] [dict.txt]
 # → dist/：index.html + 1 个 JS + 1 个 wasm + mkv-index.json + .nojekyll + deploy-info.json
-# 实测 6 个文件 / 约 646 KB，零后端、完全离线
+# 实测 6 个文件 / 约 1.2 MB，零后端、完全离线
+# （关闭 release strip 后 wasm 保留符号，体积由约 646 KB 增至约 1.2 MB；见 §12.5）
 ```
 
 脚本串联「导出索引 → `dx build --release` → 精确复制 → 路径相对化」。
@@ -456,6 +457,26 @@ HTTP 500 回落、空索引回落、顶栏知识库名同步。报告：`docs/br
 CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—— Windows MSVC 的
 `link.exe` 链接 proc-macro DLL 会挂起，源码编译不可靠。
 启用 Pages 前需在仓库 Settings → Pages 把 Source 设为 **GitHub Actions**。
+
+### 12.5 CI 首跑复盘（2026-11-08，真实 GitHub Actions）
+
+仓库 `ShanksXieDev/migrant-knowledge-vault`（public），用 SSH 推送、匿名 API 查 runs。
+首次真实执行连续暴露了几个**只在 Linux runner 上出现**的问题，逐一修复：
+
+| # | 失败步骤 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | 安装 dx | 官方 `.sha256` 同时列出 `tar.gz` 与 `zip` 两行；`cut -f1` 取到的是两行拼接串，与单文件 hash 永不相等 | 按资产名 `awk '$2 == f'` 精确取行，并加空值防呆 |
+| 2 | 全量测试 | 首次 Linux 冷构建 exit 101；加诊断后重跑即通过，**根因未确认**（疑似 runner 冷启动资源波动） | 失败时输出关键错误 annotations；rust-cache 命中后稳定 |
+| 3 | 构建静态站点 | `[profile.release] strip = true` 让较新 rustc 剥掉 wasm 的 `__wasm_bindgen_unstable` / `target_features` 自定义段 → `failed to read wasm-bindgen data` | 改为 `strip = false`；体积优化交给 dx 的 wasm-opt（作用于 wasm-bindgen 输出之后） |
+| 4 | 同上（诊断轮） | 为定位 #3 补充日志收集 | 保留为长期可观测性能力 |
+
+> 公开仓库的 **job logs 下载接口**（403 `Must have admin rights`）与 **artifact zip**（401）
+> 都要认证，匿名只能读 `check-runs` annotations。因此 CI 现在会把失败步骤的末尾输出
+> 写成 `::error::` annotations，后续任何失败都能直接定位，无需 admin 权限。
+> Pages 未启用时 `deploy` 会跳过，不影响 `verify` 门禁。
+
+**第 5 次 run（`12b49c1`）全绿**：总耗时 6m15s，`verify` 全部 15 步通过
+（含 Playwright Chromium 的 18 项交互回归）；`deploy` 因 Pages 未启用按设计跳过并给出 warning。
 
 ---
 
@@ -511,12 +532,13 @@ CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—�
 
 ## 15. 下一步
 
-1. **CI 首跑核对**：仓库创建并推送 main 后，核对 GitHub Actions 首跑
-   （⚠️ 截至 2026-11-08，workflow 尚未在真实 runner 上执行过）
+1. **启用 Pages 自动发布**：Settings → Pages → Source 设为 **GitHub Actions**，
+   再触发一次 main 推送核对 `deploy` 真正发布
 2. **双链图谱视图 F-10**：可视化引用关系
 3. **检索结果精确定位**：跳到页 / 单元格 / 段落（PRD §7.1 唯一未勾选项，依赖 F-06）
 4. **移动端真机验证**：CI 只能保证可编译
 5. **Desktop GUI 人工验收**：自动刷新与外部唤起的实际窗口行为
 
 > 2026-11-08：技术债务已清理，P0 文件监听、P1 静态发布（方案 A）+ CI 门禁、
-> Desktop UI 自动刷新与 F-08 外部唤起均已落地。CI workflow 的真实首跑待仓库推送后核对。
+> Desktop UI 自动刷新与 F-08 外部唤起均已落地。代码已推送到 GitHub，
+> **CI 真实首跑已核对**并修掉 dx 校验和、wasm strip 等 Linux 专属问题（复盘见 §12.5）。
