@@ -21,12 +21,13 @@ v0.1 工程脚手架：**Rust 核心库 + Dioxus 三端（Desktop / Web / Mobile
 | 反链 / 出链 | ✅  | 目标解析支持路径、文件名、主干、标题四级匹配                                         |
 | Git 版本  | ✅  | 提交、历史、差异、回滚；`.kbindex/` 自动忽略                                   |
 | 内置编辑器   | ✅  | GridCraft（Excel）/ DeckCraft（PPT 完整编辑）/ WordCraft（Word），始终读写原生文件 |
-| Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**dx serve + Edge 真实浏览器 18/18 项验证通过** |
+| Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**真实浏览器 25/25 项验证通过** |
 | 文件监听    | ✅  | `notify` 增量索引 + 双链重算；实测索引 51ms、端到端 175ms（PRD 要求 1s 内）        |
-| 静态发布 / CI | ✅  | `scripts/publish-web.sh` 产出 6 文件纯静态站点；GitHub Actions 门禁 + Pages 自动发布已上线（[线上站点](https://shanksxiedev.github.io/migrant-knowledge-vault/)） |
+| 静态发布 / CI | ✅  | 6 文件纯静态站点；CI 门禁 + Pages 自动发布；wasm 经 wasm-opt 压到 667KB（[线上站点](https://shanksxiedev.github.io/migrant-knowledge-vault/)） |
 | UI 自动刷新 | ✅  | 索引修订号 + 250ms 轮询，文档列表 / 反链 / 检索结果自动重渲染 |
 | 外部唤起 F-08 | ✅  | 用系统默认应用打开原始文件（Windows `start` / macOS `open` / Linux `xdg-open`） |
-| 双链图谱视图  | 🚧 | 可视化引用关系，列入 v0.2                                                    |
+| 检索精确定位 | ✅  | 结果列表位置标签 + 预览区定位条与片段高亮；跳到段落 / 页 / 单元格行 / 节点（§13.4） |
+| 双链图谱 F-10 | ✅  | SVG 环形图谱：缩放、点选节点跳转；浏览器 B5–B7 验证（§13.5） |
 
 ---
 
@@ -349,13 +350,13 @@ MKV_URL=http://127.0.0.1:8080 node scripts/browser-check.cjs
 > 不会打断输入；清空条件后回车自动回到「全部文档」页签。
 > 该契约同时由 `mkv-ui` 的 SSR 测试与浏览器回归脚本守住。
 
-回归脚本覆盖 **18 项交互断言**：首屏 8 篇跨 6 格式文档、顶栏索引来源、点击切换预览、
-正文非空、Web 端只读语义（无「内置编辑」按钮）、双链反链、回车触发中文检索与自动切页签、
-点击结果打开文档、检索区无搜索按钮、**仅输入不触发检索**、二次回车检索、清空回车恢复全部文档、
-Tab 切换、无未捕获 JS 异常。
-截图与 JSON 报告落在 `docs/browser-validation/`。
+回归脚本覆盖 **25 项交互断言**：A1–A18 为既有核心链路（首屏 8 篇跨 6 格式、顶栏索引来源、
+预览切换、Web 只读语义、双链反链、回车检索 / 二次回车 / 清空恢复、Tab 切换、无未捕获异常），
+B1–B4 为检索结果精确定位（位置标签、跳转高亮、命中正文、查看全文恢复），
+B5–B7 为 F-10 关系图谱（节点与边渲染、缩放、点选跳转）。
+截图与 JSON 报告落在 `docs/browser-validation/`（本轮：`feature-ab/`）。
 
-**已验证结果（2026-11-08）**：18/18 全通过，0 console error、0 未捕获异常，耗时约 2.0 秒。
+**已验证结果（2026-11-08 下午）**：**25/25 全通过**，0 console error、0 未捕获异常。
 
 ---
 
@@ -407,8 +408,8 @@ cargo run -p mkv-cli -- watch D:/MyVault --debounce 200 --auto-commit
 ```bash
 scripts/publish-web.sh [vault_dir] [dict.txt]
 # → dist/：index.html + 1 个 JS + 1 个 wasm + mkv-index.json + .nojekyll + deploy-info.json
-# 实测 6 个文件 / 约 1.2 MB，零后端、完全离线
-# （关闭 release strip 后 wasm 保留符号，体积由约 646 KB 增至约 1.2 MB；见 §12.5）
+# 实测 6 个文件 / 约 730 KB，零后端、完全离线
+# （wasm 经 wasm-opt 从 1,245,191B 压到 667,161B；见 §12.7）
 ```
 
 脚本串联「导出索引 → `dx build --release` → 精确复制 → 路径相对化」。
@@ -453,11 +454,11 @@ HTTP 500 回落、空索引回落、顶栏知识库名同步。报告：`docs/br
 
 | 门禁 | 内容 |
 |---|---|
-| 测试 | `cargo test --workspace`（112 项全绿） |
+| 测试 | `cargo test --workspace`（127 项全绿） |
 | 移动端 | `cargo build -p mkv-mobile` 编译门禁；**真机验证仍需人工** |
 | 依赖 | wasm32 依赖树零 `tantivy / jieba / zstd / rusqlite / git2 / notify / cc` |
-| 构建 | `scripts/publish-web.sh` + 产物清单校验 |
-| 浏览器 | `dist/` 起静态服务 → Playwright Chromium 跑 18 项交互回归 |
+| 构建 | `scripts/publish-web.sh` + 产物清单校验 + **wasm < 800KB 体积门禁** |
+| 浏览器 | `dist/` 起静态服务 → Playwright Chromium 跑 25 项交互回归 |
 | 发布 | main 分支自动 `actions/deploy-pages`（run #7 已实测 success）；PR 只验证不发布 |
 
 CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—— Windows MSVC 的
@@ -499,9 +500,31 @@ warning、不影响 `verify` 门禁；配置后 `actions/deploy-pages@v4` 自动
 > 从「push main」到「站点可访问」全自动，无人工上传步骤。
 > 后续每次 main 推送都会重跑门禁并重新发布；PR 只验证不发布。
 
+### 12.7 wasm 体积优化（wasm-opt）
+
+`dx build --release` 默认 `--debug-symbols=true`，产物里带大量 DWARF 调试段；
+而 `[profile.release] strip = false` 不能改（`strip = true` 会剥掉 wasm-bindgen 自定义段，见 §12.5）。
+因此优化放在**发布脚本**里，作用于 wasm-bindgen 输出之后：`wasm-opt -Oz --strip-debug`。
+
+| 项 | 值 |
+|---|---|
+| 优化前 | 1,245,191 bytes（含新增位置片段与图谱代码） |
+| 优化后 | **667,161 bytes（约 651 KB）** |
+| 压缩率 | **-46.4%** |
+| 工具来源 | 优先 dx 自动下载的 `~/.dx/tools/binaryen-*/bin/wasm-opt`（版本与 wasm-bindgen 产物匹配），PATH 上的 binaryen 仅作兜底 |
+| 失败策略 | 找不到工具 / 未产出更小产物 → 只警告并保留原始 wasm，绝不阻断本地发布；CI 的 `wasm < 800KB` 门禁会据此判定失败 |
+
+`deploy-info.json` 新增 `wasm_optimization` 记录前后体积与参数；CI 断言 wasm < 800 KB
+（未优化约 1.2 MB），防止优化悄悄失效。CI 侧 ubuntu runner 额外 `apt install binaryen` 兜底，
+但脚本优先用 dx 自带版本，避免 runner 预装的较老 binaryen 解析不了新版 wasm 特性；
+优化未采用时会把 wasm-opt 的 stderr 打进日志便于排障。
+
+> Windows / Git Bash 注意：shell 传给 Python 的是 `/c/...` POSIX 路径，
+> 需在 Python 侧转成 `C:/...` 并补 `.exe` 后缀，否则会误判「未找到 wasm-opt」（本轮实测踩过）。
+
 ---
 
-## 13. Desktop UI 自动刷新与 F-08 外部唤起
+## 13. UI 能力增强（自动刷新 / 外部唤起 / 精确定位 / 关系图谱）
 
 ### 13.1 UI 自动刷新（消除「需一次交互才刷新」）
 
@@ -543,6 +566,32 @@ warning、不影响 `verify` 门禁；配置后 `actions/deploy-pages@v4` 自动
 
 ---
 
+### 13.4 检索结果精确定位（PRD §7.1 最后一项）
+
+新增跨端纯 Rust 模块 `packages/core/src/locate.rs`：
+
+- `segment_text(text, format)` 把已抽取的纯文本切成**带位置标签的片段**：
+  Markdown 标题 / 段落、Excel `{sheet} · 第 N 行`、PPT `第 N 页`、Word `第 N 段`、
+  Visio `第 N 页`、Drawio `节点 N`。片段拼接后与原文严格相等（单测覆盖）。
+- 不改抽取器、不改倒排表：`PrebuiltDoc.segments` 用 `#[serde(default)]`，
+  **v1 旧索引产物仍可解析**，运行期用同一函数补算片段。
+- `KnowledgeService::locate()` 默认 `None`，Web / Desktop 各自实现；查询词按
+  「完整词 → 最长片段 → 单字」降级，**正文优先、标题兜底**。
+- UI：结果列表显示 `📍 第 N 段` 等位置标签；点击后预览区显示定位条、只渲染命中片段
+  及前后各一段并高亮，「查看全文」可恢复全文。浏览器 B1–B4 覆盖标签 / 跳转 / 高亮 / 恢复。
+
+PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」仍属独立范围。
+
+### 13.5 双链关系图谱 F-10
+
+- `locate::build_graph_snapshot()`：确定性环形布局，高度数节点靠中心；
+  悬空目标 / 自环 / 重复边剔除，节点按路径排序保证产物可复现。
+- `KnowledgeService::graph_snapshot()` 默认空图；Web 用索引 links、Desktop 用 Vault 出链。
+- UI 侧栏新增「关系图谱」页签；主区 SVG 渲染节点与有向边，支持放大 / 缩小 / 重置，
+  **点选节点跳回文档预览**。浏览器 B5–B7 覆盖 8 节点 / 8 边、缩放 transform 变化与点选跳转。
+
+---
+
 ## 14. 相关文档
 
 - `../本地个人知识库-需求描述.md` —— 需求主文档（v1.2）
@@ -553,16 +602,16 @@ warning、不影响 `verify` 门禁；配置后 `actions/deploy-pages@v4` 自动
 
 ## 15. 下一步
 
-1. **产物体积优化**：`strip = false` 后 wasm 约 1.07MB；评估在 `Dioxus.toml` 启用 dx 的
-   `wasm-opt`（作用于 wasm-bindgen 输出之后），目标压回约 600KB，并用 18 项回归确认无损
-2. **双链图谱视图 F-10**：可视化引用关系
-3. **检索结果精确定位**：跳到页 / 单元格 / 段落（PRD §7.1 唯一未勾选项，依赖 F-06）
-4. **移动端真机验证**：CI 只能保证可编译
-5. **Desktop GUI 人工验收**：自动刷新与外部唤起的实际窗口行为
-6. **Node.js 20 警告**：CI 中 `actions/*` 的 Node 20 deprecation 提示，待官方迁移后评估升级
+1. **移动端真机验证**：CI 只能保证可编译
+2. **Desktop GUI 人工验收**：自动刷新与外部唤起的实际窗口行为
+3. **F-06 跨格式引用**：引用处动态显示源文档片段并随源更新（精确定位已覆盖「跳到位置」）
+4. **F-10 图谱进阶**：力导向聚类、按标签着色、大库虚拟渲染
+5. **Node.js 20 警告**：CI 中 `actions/*` 的 Node 20 deprecation 提示，待官方迁移后评估升级
 
 > 2026-11-08：技术债务已清理，P0 文件监听、P1 静态发布（方案 A）+ CI 门禁、
 > Desktop UI 自动刷新与 F-08 外部唤起均已落地。代码已推送到 GitHub，
 > **CI 真实首跑已核对**并修掉 dx 校验和、wasm strip 等 Linux 专属问题（复盘见 §12.5）。
 > **Pages 自动发布已闭环**：run #7 的 `deploy-pages` 实测 success，
 > 线上站点 <https://shanksxiedev.github.io/migrant-knowledge-vault/> 18/18 项回归全绿（§12.6）。
+> **A + B 均已完成**（§12.7 / §13.4 / §13.5）：wasm 1,245,191B → 667,161B（-46.4%）；
+> 检索结果精确定位与 F-10 双链图谱落地；**127 项测试 + 25/25 项浏览器回归全绿**。

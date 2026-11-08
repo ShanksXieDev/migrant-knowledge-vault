@@ -49,6 +49,8 @@ pub enum ListMode {
     Documents,
     /// 检索结果。
     Results,
+    /// 双链关系图谱（F-10）。
+    Graph,
 }
 
 /// 应用级共享状态。
@@ -84,6 +86,8 @@ pub struct VaultContext {
     /// 各视图组件订阅它，从而在索引变化时**自动重渲染**，
     /// 不再需要用户手动切页签 / 重新检索。Web 端只读索引恒为 0。
     pub revision: Signal<u64>,
+    /// 检索命中的精确位置（PRD §7.1）；`None` 表示查看全文。
+    pub focus: Signal<Option<mkv_core::locate::HitLocation>>,
 }
 
 impl VaultContext {
@@ -102,6 +106,7 @@ impl VaultContext {
             view_mode: Signal::new(ViewMode::Preview),
             list_mode: Signal::new(ListMode::Documents),
             revision: Signal::new(0),
+            focus: Signal::new(None),
         }
     }
 
@@ -136,6 +141,9 @@ impl VaultContext {
 
         let mut status = self.status;
         status.set(format!("已自动刷新 · {count} 个文档"));
+        // 索引重排后旧的片段下标不再可信，清掉定位态避免指错位置。
+        let mut focus = self.focus;
+        focus.set(None);
     }
 }
 
@@ -206,13 +214,20 @@ pub fn SideBar(ctx: VaultContext) -> Element {
                     onclick: move |_| ctx.list_mode.set(ListMode::Results),
                     "检索结果"
                 }
+                button {
+                    class: if mode == ListMode::Graph { "mkv-tab mkv-tab-active" } else { "mkv-tab" },
+                    onclick: move |_| ctx.list_mode.set(ListMode::Graph),
+                    "关系图谱"
+                }
             }
             // 注意：rsx 的子节点不支持 match（会被当成原始 Rust 表达式，
             // 使 `DocList { ctx }` 解析到组件补全枚举上），这里用 if/else 分支。
             if mode == ListMode::Documents {
                 DocList { ctx }
-            } else {
+            } else if mode == ListMode::Results {
                 ResultList { ctx }
+            } else {
+                GraphLegend { ctx }
             }
         }
     }
@@ -253,6 +268,7 @@ pub fn DocItem(ctx: VaultContext, doc: DocumentRecord) -> Element {
             onclick: move |_| {
                 let mut current_doc = ctx.current_doc;
                 let mut backlinks = ctx.backlinks;
+                ctx.focus.set(None);
                 current_doc.set(doc.path.clone());
                 backlinks.set(ctx.service.read().backlinks(&doc.path));
             },
@@ -289,6 +305,10 @@ pub fn ResultList(ctx: VaultContext) -> Element {
 pub fn ResultItem(ctx: VaultContext, hit: SearchHit) -> Element {
     let current = ctx.current_doc.read().clone();
     let is_active = current == hit.path;
+    // PRD §7.1：结果列表直接给出命中位置标签，点击后预览区跳到该片段并高亮。
+    let query = ctx.query.peek().clone();
+    let location = ctx.service.read().locate(&hit.path, &query);
+    let hit_path = hit.path.clone();
 
     rsx! {
         button {
@@ -296,13 +316,23 @@ pub fn ResultItem(ctx: VaultContext, hit: SearchHit) -> Element {
             onclick: move |_| {
                 let mut current_doc = ctx.current_doc;
                 let mut backlinks = ctx.backlinks;
-                current_doc.set(hit.path.clone());
-                backlinks.set(ctx.service.read().backlinks(&hit.path));
+                let mut focus = ctx.focus;
+                let query = ctx.query.peek().clone();
+                let loc = ctx.service.read().locate(&hit_path, &query);
+                current_doc.set(hit_path.clone());
+                backlinks.set(ctx.service.read().backlinks(&hit_path));
+                focus.set(loc);
             },
             div { class: "mkv-result-title", "{hit.title}" }
             div { class: "mkv-result-meta",
                 span { "{hit.format}" }
                 span { class: "mkv-muted", "{hit.path}" }
+            }
+            if let Some(loc) = location.as_ref() {
+                div { class: "mkv-hit-location",
+                    span { class: "mkv-hit-loc-label", "📍 {loc.label}" }
+                    span { class: "mkv-muted", "{loc.snippet}" }
+                }
             }
         }
     }
@@ -312,10 +342,13 @@ pub fn ResultItem(ctx: VaultContext, hit: SearchHit) -> Element {
 #[component]
 pub fn MainPane(ctx: VaultContext) -> Element {
     let current = ctx.current_doc.read().clone();
+    let mode = ctx.list_mode.read().clone();
 
     rsx! {
         main { class: "mkv-main",
-            if current.is_empty() {
+            if mode == ListMode::Graph {
+                GraphPane { ctx }
+            } else if current.is_empty() {
                 div { class: "mkv-empty",
                     h2 { "欢迎使用 Migrant Knowledge Vault" }
                     p { "本地优先 · 文件优先 · Git 优先" }
@@ -356,6 +389,25 @@ pub fn PreviewPane(ctx: VaultContext) -> Element {
     // 单独克隆一份路径，避免与「内置编辑」的事件闭包争用同一个 String。
     let external_path = current.clone();
     let external_available = ctx.service.read().supports_external_open();
+
+    // PRD §7.1：按格式把原文切成带位置标签的片段（与索引产物共用同一套切分函数）。
+    // 有定位时只渲染命中片段及其前后各一段，视觉上即「跳到精确位置」。
+    let format = current
+        .rsplit('.')
+        .next()
+        .and_then(mkv_core::Format::from_extension)
+        .unwrap_or(mkv_core::Format::Markdown);
+    let segments = mkv_core::locate::segment_text(&content, format);
+    let focus = ctx.focus.read().clone();
+    let focus_idx = focus.as_ref().map(|f| f.segment_index);
+    let visible: Vec<mkv_core::locate::TextSegment> = match focus_idx {
+        Some(i) if i < segments.len() => {
+            let lo = i.saturating_sub(1);
+            let hi = (i + 2).min(segments.len());
+            segments[lo..hi].to_vec()
+        }
+        _ => segments.clone(),
+    };
 
     rsx! {
         section { class: "mkv-preview",
@@ -399,8 +451,154 @@ pub fn PreviewPane(ctx: VaultContext) -> Element {
                 }
             }
             div { class: "mkv-preview-body",
-                pre { class: "mkv-doc-content", "{content}" }
+                if let Some(loc) = focus.as_ref() {
+                    div { class: "mkv-location-bar",
+                        span { class: "mkv-location-target", "📍 已定位：{loc.label}" }
+                        span { class: "mkv-muted mkv-location-snippet", "{loc.snippet}" }
+                        button {
+                            class: "mkv-btn mkv-btn-sm",
+                            onclick: move |_| ctx.focus.set(None),
+                            "查看全文"
+                        }
+                    }
+                }
+                pre { class: "mkv-doc-content",
+                    for seg in visible.iter() {
+                        span {
+                            class: if Some(seg.index) == focus_idx {
+                                "mkv-segment mkv-segment-active"
+                            } else {
+                                "mkv-segment"
+                            },
+                            "{seg.text}"
+                        }
+                    }
+                }
             }
+        }
+    }
+}
+
+/// 侧栏图谱图例：节点数 / 边数与节点清单（纯展示，点选跳转在图谱画布里完成）。
+#[component]
+pub fn GraphLegend(ctx: VaultContext) -> Element {
+    let _revision = *ctx.revision.read();
+    let graph = ctx.service.read().graph_snapshot();
+
+    rsx! {
+        div { class: "mkv-graph-legend",
+            p { class: "mkv-muted", "{graph.nodes.len()} 个节点 · {graph.edges.len()} 条边" }
+            if graph.nodes.is_empty() {
+                p { class: "mkv-muted", "当前知识库还没有双链关系。" }
+            } else {
+                for node in graph.nodes.clone() {
+                    div { class: "mkv-graph-legend-item",
+                        span { "{node.title}" }
+                        span { class: "mkv-muted", "{node.degree} 条连接" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 图谱画布：SVG 环形布局 + 缩放 + 点选节点跳转（F-10）。
+#[component]
+pub fn GraphPane(ctx: VaultContext) -> Element {
+    let _revision = *ctx.revision.read();
+    let graph = ctx.service.read().graph_snapshot();
+    let mut zoom = use_signal(|| 1.0f32);
+    let scale = *zoom.read();
+    let cx = graph.width / 2.0;
+    let cy = graph.height / 2.0;
+    let view_box = format!("0 0 {} {}", graph.width, graph.height);
+    let transform = format!(
+        "translate({cx} {cy}) scale({scale}) translate(-{cx} -{cy})"
+    );
+    let node_count = graph.nodes.len();
+    let edge_count = graph.edges.len();
+
+    rsx! {
+        section { class: "mkv-graph",
+            div { class: "mkv-graph-header",
+                h2 { "双链关系图谱" }
+                span { class: "mkv-muted", "{node_count} 个节点 · {edge_count} 条边" }
+                div { class: "mkv-graph-tools",
+                    button {
+                        class: "mkv-btn mkv-btn-sm",
+                        onclick: move |_| {
+                            let current = *zoom.peek();
+                            zoom.set((current * 1.25).min(2.5));
+                        },
+                        "放大 +"
+                    }
+                    button {
+                        class: "mkv-btn mkv-btn-sm",
+                        onclick: move |_| {
+                            let current = *zoom.peek();
+                            zoom.set((current / 1.25).max(0.5));
+                        },
+                        "缩小 −"
+                    }
+                    button {
+                        class: "mkv-btn mkv-btn-sm",
+                        onclick: move |_| { zoom.set(1.0); },
+                        "重置"
+                    }
+                }
+            }
+            div { class: "mkv-graph-canvas",
+                svg {
+                    class: "mkv-graph-svg",
+                    view_box: "{view_box}",
+                    g { transform: "{transform}",
+                        for edge in graph.edges.clone() {
+                            if let (Some(a), Some(b)) =
+                                (graph.nodes.get(edge.from), graph.nodes.get(edge.to))
+                            {
+                                line {
+                                    class: "mkv-graph-edge",
+                                    x1: "{a.x}", y1: "{a.y}",
+                                    x2: "{b.x}", y2: "{b.y}",
+                                }
+                            }
+                        }
+                        for node in graph.nodes.clone() {
+                            GraphNodeMark { ctx, node }
+                        }
+                    }
+                }
+                if node_count == 0 {
+                    p { class: "mkv-muted", "知识库为空，暂无可绘制的双链关系。" }
+                }
+            }
+        }
+    }
+}
+
+/// 单个图谱节点：点击后回到预览视图并选中该文档。
+#[component]
+pub fn GraphNodeMark(ctx: VaultContext, node: mkv_core::locate::GraphNodeView) -> Element {
+    let path = node.path.clone();
+    let title: String = node.title.chars().take(10).collect();
+    let x = node.x;
+    let y = node.y;
+    let r = 7.0 + (node.degree.min(4) as f32) * 1.8;
+
+    rsx! {
+        g {
+            class: "mkv-graph-node",
+            onclick: move |_| {
+                let mut current_doc = ctx.current_doc;
+                let mut backlinks = ctx.backlinks;
+                let mut list_mode = ctx.list_mode;
+                current_doc.set(path.clone());
+                backlinks.set(ctx.service.read().backlinks(&path));
+                ctx.focus.set(None);
+                list_mode.set(ListMode::Documents);
+            },
+            circle { class: "mkv-graph-node-dot", cx: "{x}", cy: "{y}", r: "{r}" }
+            text { class: "mkv-graph-node-label", x: "{x}", y: "{y}", "{title}" }
         }
     }
 }

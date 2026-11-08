@@ -44,6 +44,12 @@ pub struct PrebuiltDoc {
     pub modified_at: u64,
     /// 抽取出的纯文本（用于预览与摘要）。
     pub text: String,
+    /// 带位置标签的片段（PRD §7.1 精确定位）。
+    ///
+    /// `#[serde(default)]`：旧产物没有该字段时解析为空数组，
+    /// 运行期由 [`PrebuiltIndex::segments`] 用同一套切分规则补算。
+    #[serde(default)]
+    pub segments: Vec<crate::locate::TextSegment>,
 }
 
 /// 一个词条及其倒排表。
@@ -266,6 +272,40 @@ impl PrebuiltIndex {
             .map(|d| d.text.clone())
     }
 
+    /// 带位置标签的片段（兼容不带 `segments` 的旧产物）。
+    pub fn segments(&self, rel_path: &str) -> Vec<crate::locate::TextSegment> {
+        let Some(doc) = self.docs.iter().find(|d| d.path == rel_path) else {
+            return Vec::new();
+        };
+        if !doc.segments.is_empty() {
+            return doc.segments.clone();
+        }
+        let format = crate::format::Format::from_path(std::path::Path::new(rel_path))
+            .unwrap_or(crate::format::Format::Markdown);
+        crate::locate::segment_text(&doc.text, format)
+    }
+
+    /// 检索命中的精确位置（PRD §7.1）。
+    pub fn locate(&self, rel_path: &str, query: &str) -> Option<crate::locate::HitLocation> {
+        crate::locate::locate_in_segments(&self.segments(rel_path), query)
+    }
+
+    /// 双链图谱快照（F-10）。
+    pub fn graph_snapshot(&self) -> crate::locate::GraphSnapshot {
+        let nodes: Vec<(String, String)> = self
+            .docs
+            .iter()
+            .map(|d| (d.path.clone(), d.title.clone()))
+            .collect();
+        let links: Vec<(String, String)> = self
+            .links
+            .iter()
+            .filter(|l| !l.to_path.is_empty())
+            .map(|l| (l.from_path.clone(), l.to_path.clone()))
+            .collect();
+        crate::locate::build_graph_snapshot(&nodes, &links)
+    }
+
     /// 反链。
     pub fn backlinks(&self, rel_path: &str) -> Vec<LinkRecord> {
         self.links
@@ -369,6 +409,14 @@ impl crate::service::KnowledgeService for PrebuiltService {
             self.index.doc_count()
         )
     }
+
+    fn locate(&self, rel_path: &str, query: &str) -> Option<crate::locate::HitLocation> {
+        self.index.locate(rel_path, query)
+    }
+
+    fn graph_snapshot(&self) -> crate::locate::GraphSnapshot {
+        self.index.graph_snapshot()
+    }
 }
 
 #[cfg(test)]
@@ -388,6 +436,7 @@ mod tests {
                     size: 100,
                     modified_at: 1,
                     text: "模流分析是注塑成型前的重要仿真手段，用于评估浇口位置与熔接线位置。".into(),
+                    segments: Vec::new(),
                 },
                 PrebuiltDoc {
                     path: "b.md".into(),
@@ -396,6 +445,7 @@ mod tests {
                     size: 80,
                     modified_at: 2,
                     text: "注射速度与熔体温度的基线取值，用于工艺评审。".into(),
+                    segments: Vec::new(),
                 },
             ],
             links: vec![LinkRecord {
@@ -486,5 +536,50 @@ mod tests {
         let idx = sample_index();
         let hits = idx.search("浇口", 5);
         assert!(hits[0].snippet.contains("浇口"));
+    }
+
+    #[test]
+    fn segments_roundtrip_through_json() {
+        let mut idx = sample_index();
+        idx.docs[0].segments = crate::locate::segment_text(
+            &idx.docs[0].text,
+            crate::format::Format::Markdown,
+        );
+        let json = idx.to_json().unwrap();
+        assert!(json.contains("\"segments\""), "片段应随索引产物打包");
+        let back = PrebuiltIndex::from_json(&json).unwrap();
+        assert_eq!(back.docs[0].segments.len(), idx.docs[0].segments.len());
+        let joined: String = back.docs[0]
+            .segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect();
+        assert_eq!(joined, back.docs[0].text, "片段拼接必须无损");
+    }
+
+    #[test]
+    fn legacy_index_without_segments_still_locates() {
+        // v1 旧产物没有 segments 字段：serde default 为空 → 运行期用同一套规则补算
+        let idx = sample_index();
+        let mut value: serde_json::Value =
+            serde_json::from_str(&idx.to_json().unwrap()).unwrap();
+        for d in value["docs"].as_array_mut().unwrap() {
+            d.as_object_mut().unwrap().remove("segments");
+        }
+        let legacy = PrebuiltIndex::from_json(&value.to_string()).unwrap();
+        assert!(legacy.docs[0].segments.is_empty());
+        let segs = legacy.segments("a.md");
+        assert!(!segs.is_empty(), "旧产物应能在运行期补算片段");
+        let hit = legacy.locate("a.md", "浇口").expect("旧产物也应能定位");
+        assert!(hit.snippet.contains("浇口"));
+    }
+
+    #[test]
+    fn graph_snapshot_comes_from_links() {
+        let idx = sample_index();
+        let g = idx.graph_snapshot();
+        assert_eq!(g.nodes.len(), 2);
+        assert_eq!(g.edges.len(), 1, "b.md → a.md 一条边");
+        assert!(g.nodes.iter().any(|n| n.path == "a.md"));
     }
 }

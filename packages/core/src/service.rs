@@ -40,6 +40,18 @@ pub trait KnowledgeService: Send + Sync {
         "就绪".to_string()
     }
 
+    /// 检索命中的精确位置（PRD §7.1：跳到页 / 单元格 / 段落）。
+    ///
+    /// 默认 `None`：不支持定位的后端会让结果列表隐藏位置标签，不谎报能力。
+    fn locate(&self, _rel_path: &str, _query: &str) -> Option<crate::locate::HitLocation> {
+        None
+    }
+
+    /// 双链图谱快照（F-10）。默认空图。
+    fn graph_snapshot(&self) -> crate::locate::GraphSnapshot {
+        crate::locate::GraphSnapshot::default()
+    }
+
     /// 是否支持用系统默认应用打开原始文档（F-08）。
     ///
     /// Web 端只有内嵌索引、没有本地文件，返回 false；

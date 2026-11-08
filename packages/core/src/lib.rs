@@ -26,6 +26,7 @@ pub mod editor;
 pub mod error;
 pub mod format;
 pub mod gridcraft;
+pub mod locate;
 pub mod ooxml;
 pub mod parse;
 pub mod prebuilt;

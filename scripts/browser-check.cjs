@@ -4,6 +4,9 @@
  * 驱动真实 Microsoft Edge（headless）打开 dx serve 的页面，执行点击 / 输入 / 页签切换，
  * 验证「构建期内嵌的预构建只读索引」在真实浏览器里可检索、可预览、可看双链。
  *
+ * 共 25 项断言：A1–A18 为既有核心链路；B1–B4 为检索结果精确定位（PRD §7.1），
+ * B5–B7 为 F-10 双链关系图谱（渲染 / 缩放 / 点选跳转）。
+ *
  * 运行：
  *   NODE_PATH=<playwright 所在 node_modules> node scripts/browser-check.cjs
  *   MKV_URL=http://127.0.0.1:8080 node scripts/browser-check.cjs
@@ -271,7 +274,68 @@ async function shot(page, name) {
     const back = await page.locator('.mkv-result').count();
     check('A17 Tab 切换正常', back === expectedDocs, `${back} 篇`);
 
-    // A18 未捕获的 JS 异常（console error 单列，外网字体等网络失败不算失败）
+    // ---------- B1–B4：PRD §7.1 检索结果精确定位 ----------
+    await page.locator('.mkv-search-input').fill(keyword);
+    await page.locator('.mkv-search-input').press('Enter');
+    await page.waitForSelector('.mkv-hit-location', { timeout: 10000 });
+    const locLabels = await page.locator('.mkv-hit-loc-label').allInnerTexts();
+    check(
+      'B1 检索结果带精确位置标签',
+      locLabels.length > 0 && /第|节点|页|行|标题/.test(locLabels[0]),
+      `${locLabels.length} 条，首个=${locLabels[0] || '-'}`
+    );
+
+    await page.locator('.mkv-result').first().click();
+    await page.waitForSelector('.mkv-location-bar', { timeout: 10000 });
+    const barText = (await page.locator('.mkv-location-bar').innerText()).trim();
+    const activeSegs = await page.locator('.mkv-segment-active').count();
+    check(
+      'B2 点击结果跳到命中片段并高亮',
+      activeSegs === 1 && barText.includes('已定位'),
+      `bar="${barText.slice(0, 60)}" active=${activeSegs}`
+    );
+
+    const focusedText = (await page.locator('.mkv-doc-content').innerText()).trim();
+    check(
+      'B3 聚焦正文含命中词',
+      focusedText.includes(keyword),
+      `${focusedText.length} 字符 / 关键词 ${keyword}`
+    );
+
+    await page.locator('.mkv-location-bar button').filter({ hasText: '查看全文' }).click();
+    await page.waitForFunction(() => !document.querySelector('.mkv-location-bar'), { timeout: 5000 });
+    const fullText = (await page.locator('.mkv-doc-content').innerText()).trim();
+    const activeAfter = await page.locator('.mkv-segment-active').count();
+    check(
+      'B4 查看全文清除定位并恢复全文',
+      activeAfter === 0 && fullText.length >= focusedText.length,
+      `${focusedText.length} → ${fullText.length} 字符，剩余高亮 ${activeAfter}`
+    );
+
+    // ---------- B5–B7：F-10 双链关系图谱 ----------
+    await page.locator('.mkv-tab').filter({ hasText: '关系图谱' }).click();
+    await page.waitForSelector('.mkv-graph-svg', { timeout: 10000 });
+    const graphNodes = await page.locator('.mkv-graph-node').count();
+    const graphEdges = await page.locator('.mkv-graph-edge').count();
+    check(
+      'B5 关系图谱渲染节点与边',
+      graphNodes === expectedDocs && graphEdges > 0,
+      `${graphNodes} 节点 / ${graphEdges} 边，期望 ${expectedDocs} 节点`
+    );
+    screenshots.push(await shot(page, '04-graph-view.png'));
+
+    const graphGroup = page.locator('.mkv-graph-svg > g');
+    const t0 = await graphGroup.getAttribute('transform');
+    await page.locator('.mkv-graph-tools button').filter({ hasText: '放大' }).click();
+    const t1 = await graphGroup.getAttribute('transform');
+    check('B6 图谱缩放生效', t0 !== t1, `${t0} → ${t1}`);
+
+    await page.locator('.mkv-graph-node').first().click();
+    await page.waitForSelector('.mkv-preview-header h2', { timeout: 10000 });
+    const activeTab = (await page.locator('.mkv-tab-active').innerText()).trim();
+    check('B7 点选节点跳回文档预览', activeTab === '全部文档', `当前页签=${activeTab}`);
+
+    // A18 放到最后：覆盖定位与图谱的全部交互后再检查未捕获异常
     check('A18 无未捕获 JS 异常', pageErrors.length === 0, pageErrors.length ? pageErrors.join(' | ') : '0 个');
   } catch (e) {
     fatal = String(e && e.stack ? e.stack : e);

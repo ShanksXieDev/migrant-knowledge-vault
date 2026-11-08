@@ -748,3 +748,89 @@ body {
     border-top: 1px solid var(--mkv-border);
   }
 }
+
+/* ---------------- 检索结果精确定位（PRD §7.1） ---------------- */
+.mkv-hit-location {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--mkv-border);
+  font-size: 11px;
+}
+.mkv-hit-loc-label { color: #2563eb; font-weight: 600; }
+.mkv-location-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: var(--mkv-surface);
+  border: 1px solid var(--mkv-border);
+  border-left: 3px solid #2563eb;
+  border-radius: var(--mkv-radius);
+}
+.mkv-location-target { font-weight: 600; }
+.mkv-location-snippet {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mkv-segment { display: block; }
+.mkv-segment-active {
+  display: block;
+  padding-left: 8px;
+  margin-left: -11px;
+  background: rgba(37, 99, 235, 0.14);
+  border-left: 3px solid #2563eb;
+  border-radius: 3px;
+}
+
+/* ---------------- 双链关系图谱（F-10） ---------------- */
+.mkv-graph { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.mkv-graph-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--mkv-border);
+}
+.mkv-graph-header h2 { margin: 0; font-size: 15px; }
+.mkv-graph-tools { display: flex; gap: 6px; margin-left: auto; }
+.mkv-graph-canvas { flex: 1 1 auto; overflow: auto; padding: 12px; }
+.mkv-graph-svg {
+  width: 100%;
+  min-height: 360px;
+  background: var(--mkv-surface);
+  border: 1px solid var(--mkv-border);
+  border-radius: var(--mkv-radius);
+}
+.mkv-graph-edge { stroke: var(--mkv-border); stroke-width: 1.5; }
+.mkv-graph-node { cursor: pointer; }
+.mkv-graph-node-dot {
+  fill: #2563eb;
+  opacity: 0.85;
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+.mkv-graph-node:hover .mkv-graph-node-dot { opacity: 1; }
+.mkv-graph-node-label {
+  font-size: 10px;
+  fill: var(--mkv-text, #1f2937);
+  text-anchor: middle;
+  pointer-events: none;
+}
+.mkv-graph-legend { padding: 10px; overflow: auto; }
+.mkv-graph-legend-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--mkv-border);
+}

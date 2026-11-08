@@ -169,6 +169,32 @@ impl KnowledgeService for NativeService {
             None => Err(crate::Error::Config("知识库未打开".into())),
         }
     }
+
+    fn locate(&self, rel_path: &str, query: &str) -> Option<crate::locate::HitLocation> {
+        let text = self.read_document(rel_path)?;
+        let format = crate::format::Format::from_path(std::path::Path::new(rel_path))
+            .unwrap_or(crate::format::Format::Markdown);
+        crate::locate::locate_in_segments(
+            &crate::locate::segment_text(&text, format),
+            query,
+        )
+    }
+
+    fn graph_snapshot(&self) -> crate::locate::GraphSnapshot {
+        let docs = self.documents();
+        let nodes: Vec<(String, String)> = docs
+            .iter()
+            .map(|d| (d.path.clone(), d.title.clone()))
+            .collect();
+        // 先收集完文档再逐条取出链，避免嵌套持有全局 Vault 锁。
+        let links: Vec<(String, String)> = docs
+            .iter()
+            .flat_map(|d| self.outgoing_links(&d.path))
+            .filter(|l| !l.to_path.is_empty())
+            .map(|l| (l.from_path, l.to_path))
+            .collect();
+        crate::locate::build_graph_snapshot(&nodes, &links)
+    }
 }
 
 /// 以只读方式访问已注册的知识库；未打开时返回 None。

@@ -70,13 +70,20 @@ pub fn build_index(
 
     let prebuilt_docs: Vec<PrebuiltDoc> = docs
         .iter()
-        .map(|d| PrebuiltDoc {
-            path: d.path.clone(),
-            title: d.title.clone(),
-            format: d.format.clone(),
-            size: d.size,
-            modified_at: d.modified_at,
-            text: texts.get(&d.path).cloned().unwrap_or_default(),
+        .map(|d| {
+            let text = texts.get(&d.path).cloned().unwrap_or_default();
+            let format = crate::format::Format::from_path(std::path::Path::new(&d.path))
+                .unwrap_or(crate::format::Format::Markdown);
+            PrebuiltDoc {
+                path: d.path.clone(),
+                title: d.title.clone(),
+                format: d.format.clone(),
+                size: d.size,
+                modified_at: d.modified_at,
+                // 精确定位：按格式把原文切成带标签的片段，随索引一起打包。
+                segments: crate::locate::segment_text(&text, format),
+                text,
+            }
         })
         .collect();
 
@@ -144,5 +151,27 @@ mod tests {
         // 查询侧同样能命中（词表驱动的正向最大匹配）
         let hits = idx.search("冷却水路", 5);
         assert!(!hits.is_empty(), "词典场景下查询应命中");
+    }
+
+    #[test]
+    fn exports_position_segments_per_format() {
+        let docs = vec![crate::types::DocumentRecord {
+            path: "deck.pptx".into(),
+            title: "工艺方案".into(),
+            format: "PPT".into(),
+            size: 10,
+            modified_at: 1,
+            content_hash: String::new(),
+        }];
+        let text = "--- ppt/slides/slide1.xml ---\n第一页浇口设计\n--- ppt/slides/slide2.xml ---\n第二页冷却\n";
+        let mut texts = HashMap::new();
+        texts.insert("deck.pptx".to_string(), text.to_string());
+
+        let idx = build_index(&docs, &texts, &[], None, "测试库").unwrap();
+        let segs = &idx.docs[0].segments;
+        assert_eq!(segs.len(), 2, "PPT 应按页切分，实际 {segs:?}");
+        assert!(segs[0].label.contains("1") && segs[1].label.contains("2"));
+        let joined: String = segs.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(joined, text, "导出片段拼接必须无损");
     }
 }
