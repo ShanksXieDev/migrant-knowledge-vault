@@ -137,16 +137,22 @@ jobs:
           #
           # 这里在 dx 装好之后「预先显式安装到 dx 期望的目录」，
           # dx 检测到目录已存在就不再自行下载，从根上消除该失败模式。
-          # 版本号从 dx 可执行文件里探测（模板 binaryen-version_<ver>），
-          # 避免 dx 升级后目录名漂移导致预置对不上。
-          BINARYEN_VERSION="127"
-          DETECTED="$(grep -a -o 'binaryen-version_[0-9]\{3\}' "$HOME/.cargo/bin/dx" | head -n1 | grep -o '[0-9]\{3\}' || true)"
-          if [ -n "$DETECTED" ]; then
-            BINARYEN_VERSION="$DETECTED"
-            echo "从 dx 探测到 binaryen 版本：$BINARYEN_VERSION"
-          fi
-          BIN_ASSET="binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz"
-          TARGET_DIR="$HOME/.dx/tools/binaryen-${BINARYEN_VERSION}"
+          # 两个版本号不是一回事，必须分清（run #19 就栽在这里）：
+          #   - TOOL_VERSION：dx 的工具索引号，决定缓存目录名 ~/.dx/tools/binaryen-<TOOL_VERSION>
+          #     （dx 二进制里硬编码为 wasm-opt129 → 目录 binaryen-129）
+          #   - RELEASE_VERSION：binaryen 上游 release tag，决定下载 URL
+          #     （dx 二进制里硬编码为 version_127 → binaryen-version_127-*.tar.gz）
+          # 目录名用错会导致 dx 认为没装过、重新走不稳定直链下载（run #19 构建卡死）。
+          TOOL_VERSION="129"
+          RELEASE_VERSION="127"
+          T_DETECTED="$(grep -a -o 'wasm-opt[0-9]\{3\}' "$HOME/.cargo/bin/dx" | head -n1 | grep -o '[0-9]\{3\}' || true)"
+          R_DETECTED="$(grep -a -o 'binaryen-version_[0-9]\{3\}' "$HOME/.cargo/bin/dx" | head -n1 | grep -o '[0-9]\{3\}' || true)"
+          [ -n "$T_DETECTED" ] && TOOL_VERSION="$T_DETECTED"
+          [ -n "$R_DETECTED" ] && RELEASE_VERSION="$R_DETECTED"
+          echo "dx 工具版本号：$TOOL_VERSION（缓存目录 binaryen-${TOOL_VERSION}）"
+          echo "binaryen release 版本：$RELEASE_VERSION（下载地址用）"
+          BIN_ASSET="binaryen-version_${RELEASE_VERSION}-x86_64-linux.tar.gz"
+          TARGET_DIR="$HOME/.dx/tools/binaryen-${TOOL_VERSION}"
           BIN_API="https://api.github.com/repos/WebAssembly/binaryen"
 
           mkdir -p "$TARGET_DIR/bin"
@@ -157,13 +163,13 @@ jobs:
             BIN_OK=0
             for attempt in 1 2 3; do
               if curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors -A "mkv-ci" \
-                   "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/${BIN_ASSET}" \
+                   "https://github.com/WebAssembly/binaryen/releases/download/version_${RELEASE_VERSION}/${BIN_ASSET}" \
                    -o binaryen.tar.gz; then
                 BIN_OK=1; break
               fi
               echo "  直链失败，尝试 API 资产通道"
               BIN_ID="$(curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors -A "mkv-ci" \
-                "$BIN_API/releases/tags/version_${BINARYEN_VERSION}" \
+                "$BIN_API/releases/tags/version_${RELEASE_VERSION}" \
                 | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(a['id'] for a in d['assets'] if a['name']=='$BIN_ASSET'))" 2>/dev/null || true)"
               if [ -n "$BIN_ID" ] && curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors \
                    -H "Accept: application/octet-stream" -A "mkv-ci" \
