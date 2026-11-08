@@ -356,16 +356,13 @@ jobs:
 
           echo "--- dx 工具目录 ---"
           ls -1 "$HOME/.dx/tools/" || true
+          # 这里统一用 $BIN_TARGET（= ~/.dx/tools/binaryen-<工具索引号>）。
+          # 之前这里还残留着旧变量 $TARGET_DIR——它在重构时被删掉了定义，
+          # 引用却留了下来，于是在 set -u 下直接以「unbound variable」终止步骤
+          # （run #21 就是这样挂的，表面看像「安装 dx 失败」，实际下载全都成功了）。
           if [ -x "$BIN_TARGET/bin/wasm-opt" ]; then
-            echo "wasm-opt：$("$BIN_TARGET/bin/wasm-opt" --version 2>&1 | head -n1)"
-          else
-            echo "wasm-opt：退回 PATH（$(command -v wasm-opt || echo 无)）"
-            wasm-opt --version || true
-          fi
-
-          if [ -x "$TARGET_DIR/bin/wasm-opt" ]; then
-            echo "wasm-opt 路径：$TARGET_DIR/bin/wasm-opt"
-            echo "wasm-opt 版本：$("$TARGET_DIR/bin/wasm-opt" --version 2>&1 | head -n1)"
+            echo "wasm-opt 路径：$BIN_TARGET/bin/wasm-opt"
+            echo "wasm-opt 版本：$("$BIN_TARGET/bin/wasm-opt" --version 2>&1 | head -n1)"
           else
             echo "::warning::dx 缓存目录中无 wasm-opt，退回 PATH 上的：$(command -v wasm-opt || echo 无)"
             wasm-opt --version || true
