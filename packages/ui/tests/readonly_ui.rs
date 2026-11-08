@@ -29,6 +29,7 @@ fn readonly_ctx() -> VaultContext {
             modified_at: 0,
             text: "零件号 / 模具编号".into(),
             segments: Vec::new(),
+            refs: Vec::new(),
         }],
         links: Vec::new(),
         postings: Vec::new(),

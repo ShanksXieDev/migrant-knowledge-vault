@@ -30,6 +30,7 @@ pub mod locate;
 pub mod ooxml;
 pub mod parse;
 pub mod prebuilt;
+pub mod refs;
 pub mod scan;
 pub mod service;
 pub mod storage;

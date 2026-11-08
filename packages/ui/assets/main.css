@@ -834,3 +834,26 @@ body {
   font-size: 12px;
   border-bottom: 1px solid var(--mkv-border);
 }
+
+/* ---------- F-06 跨格式引用：内联源片段卡片 ---------- */
+.mkv-ref-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-bottom: 1px solid var(--mkv-border);
+  background: var(--mkv-surface-2);
+}
+.mkv-ref-card {
+  display: inline-flex; flex-direction: column; gap: 2px;
+  max-width: min(560px, 92%); margin: 2px 3px; padding: 4px 10px;
+  vertical-align: baseline; text-align: left;
+  font: inherit; color: var(--mkv-text); white-space: normal;
+  background: var(--mkv-accent-soft); border: 1px solid var(--mkv-accent);
+  border-radius: 6px; cursor: pointer;
+}
+.mkv-ref-card:hover { filter: brightness(0.97); }
+.mkv-ref-card-head { font-size: 0.82em; font-weight: 600; color: var(--mkv-accent); }
+.mkv-ref-card-body {
+  font-size: 0.82em; color: var(--mkv-text-muted);
+  font-family: var(--mkv-mono); white-space: pre-wrap;
+}
+.mkv-ref-unresolved { background: var(--mkv-surface-2); border-color: var(--mkv-danger); }
+.mkv-ref-unresolved .mkv-ref-card-head { color: var(--mkv-danger); }

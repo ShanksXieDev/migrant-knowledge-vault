@@ -68,6 +68,17 @@ pub fn build_index(
         .collect();
     posting_list.sort_by(|a, b| a.token.cmp(&b.token));
 
+    // F-06：先汇总全库 (路径, 正文, 格式)，引用解析需要跨文档取源片段。
+    let all_docs: Vec<(String, String, crate::format::Format)> = docs
+        .iter()
+        .filter_map(|d| {
+            let text = texts.get(&d.path)?.clone();
+            let format = crate::format::Format::from_path(std::path::Path::new(&d.path))
+                .unwrap_or(crate::format::Format::Markdown);
+            Some((d.path.clone(), text, format))
+        })
+        .collect();
+
     let prebuilt_docs: Vec<PrebuiltDoc> = docs
         .iter()
         .map(|d| {
@@ -82,6 +93,8 @@ pub fn build_index(
                 modified_at: d.modified_at,
                 // 精确定位：按格式把原文切成带标签的片段，随索引一起打包。
                 segments: crate::locate::segment_text(&text, format),
+                // F-06：构建期把每条引用的源片段快照一起打包，Web 只读端零网络即可显示。
+                refs: crate::refs::build_reference_views(&text, &all_docs),
                 text,
             }
         })

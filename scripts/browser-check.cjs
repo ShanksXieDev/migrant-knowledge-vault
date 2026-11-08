@@ -4,8 +4,9 @@
  * 驱动真实 Microsoft Edge（headless）打开 dx serve 的页面，执行点击 / 输入 / 页签切换，
  * 验证「构建期内嵌的预构建只读索引」在真实浏览器里可检索、可预览、可看双链。
  *
- * 共 25 项断言：A1–A18 为既有核心链路；B1–B4 为检索结果精确定位（PRD §7.1），
- * B5–B7 为 F-10 双链关系图谱（渲染 / 缩放 / 点选跳转）。
+ * 共 28 项断言：A1–A18 为既有核心链路；B1–B4 为检索结果精确定位（PRD §7.1），
+ * B5–B7 为 F-10 双链关系图谱（渲染 / 缩放 / 点选跳转）；
+ * C1–C3 为 F-06 跨格式引用（内联源片段 / 刷新 / 点选跳转）。
  *
  * 运行：
  *   NODE_PATH=<playwright 所在 node_modules> node scripts/browser-check.cjs
@@ -334,6 +335,45 @@ async function shot(page, name) {
     await page.waitForSelector('.mkv-preview-header h2', { timeout: 10000 });
     const activeTab = (await page.locator('.mkv-tab-active').innerText()).trim();
     check('B7 点选节点跳回文档预览', activeTab === '全部文档', `当前页签=${activeTab}`);
+
+    // ---------- C1–C3：F-06 跨格式引用 ----------
+    const refDoc = index.docs.find((d) => d.path.includes('跨格式引用示例'));
+    if (refDoc) {
+      await page.locator('.mkv-tab').filter({ hasText: '全部文档' }).click();
+      await page.locator('.mkv-result').filter({ hasText: refDoc.path }).first().click();
+      await page.waitForSelector('.mkv-ref-card', { timeout: 10000 });
+      const refCards = await page.locator('.mkv-ref-card').count();
+      const cardText = (await page.locator('.mkv-ref-card').first().innerText()).trim();
+      const refHeads = await page.locator('.mkv-ref-card-head').allInnerTexts();
+      check(
+        'C1 引用处内联显示源片段内容',
+        refCards >= 4 && cardText.includes('PN-1024') && refHeads.some((h) => h.includes('第 2 行')),
+        `${refCards} 张卡片，首张="${cardText.slice(0, 80)}"`
+      );
+      screenshots.push(await shot(page, '05-reference-view.png'));
+
+      await page.locator('.mkv-ref-bar button').filter({ hasText: '刷新引用' }).click();
+      const refreshStatus = (await page.locator('.mkv-topbar-status').innerText()).trim();
+      check(
+        'C2 刷新引用按钮可用',
+        refreshStatus.includes('已刷新') && refreshStatus.includes('跨格式引用'),
+        `status="${refreshStatus}"`
+      );
+
+      await page.locator('.mkv-ref-card').first().click();
+      await page.waitForSelector('.mkv-location-bar', { timeout: 10000 });
+      const refPreview = (await page.locator('.mkv-preview-header h2').innerText()).trim();
+      const refActive = await page.locator('.mkv-segment-active').count();
+      check(
+        'C3 点选引用跳到源文档并定位片段',
+        refPreview.includes('模具台账.xlsx') && refActive === 1,
+        `预览="${refPreview}" 高亮片段=${refActive}`
+      );
+    } else {
+      check('C1 引用处内联显示源片段内容', false, '索引产物缺少跨格式引用示例文档');
+      check('C2 刷新引用按钮可用', false, '缺少示例文档');
+      check('C3 点选引用跳到源文档并定位片段', false, '缺少示例文档');
+    }
 
     // A18 放到最后：覆盖定位与图谱的全部交互后再检查未捕获异常
     check('A18 无未捕获 JS 异常', pageErrors.length === 0, pageErrors.length ? pageErrors.join(' | ') : '0 个');

@@ -2,7 +2,7 @@
 #
 # 方案 A：纯静态托管，零后端。
 # 门禁内容：单测/集成测试全绿 → wasm32 零 C 依赖 → release 静态构建
-#          → Playwright 真实浏览器回归 25/25 → 发布 GitHub Pages。
+#          → Playwright 真实浏览器回归 28/28 → 发布 GitHub Pages。
 #
 # 为什么用 Linux runner + 预编译 dx：
 #   Windows MSVC 下 `cargo install dioxus-cli` 会在链接 proc-macro DLL 时
@@ -131,7 +131,7 @@ jobs:
           npm i playwright
           npx playwright install --with-deps chromium
 
-      - name: 对 dist/ 跑 25 项浏览器交互回归
+      - name: 对 dist/ 跑 28 项浏览器交互回归
         run: |
           set -euo pipefail
           python3 -m http.server 8080 --bind 127.0.0.1 --directory dist >/tmp/mkv-http.log 2>&1 &

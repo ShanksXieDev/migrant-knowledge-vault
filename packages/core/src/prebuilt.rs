@@ -50,6 +50,12 @@ pub struct PrebuiltDoc {
     /// 运行期由 [`PrebuiltIndex::segments`] 用同一套切分规则补算。
     #[serde(default)]
     pub segments: Vec<crate::locate::TextSegment>,
+    /// 跨格式引用视图（F-06）。
+    ///
+    /// 同样是可选字段：旧产物没有时由 [`PrebuiltIndex::references`] 运行期补算，
+    /// schema 版本保持不变（v1）。
+    #[serde(default)]
+    pub refs: Vec<crate::refs::ReferenceView>,
 }
 
 /// 一个词条及其倒排表。
@@ -285,6 +291,30 @@ impl PrebuiltIndex {
         crate::locate::segment_text(&doc.text, format)
     }
 
+    /// 跨格式引用视图（F-06，兼容不带 `refs` 的旧产物）。
+    pub fn references(&self, rel_path: &str) -> Vec<crate::refs::ReferenceView> {
+        let Some(doc) = self.docs.iter().find(|d| d.path == rel_path) else {
+            return Vec::new();
+        };
+        // 没有引用语法的文档 refs 为空是正常的，不必每次都扫全库。
+        if doc.refs.is_empty() && crate::refs::parse_references(&doc.text).is_empty() {
+            return Vec::new();
+        }
+        if !doc.refs.is_empty() {
+            return doc.refs.clone();
+        }
+        let all: Vec<(String, String, crate::format::Format)> = self
+            .docs
+            .iter()
+            .map(|d| {
+                let format = crate::format::Format::from_path(std::path::Path::new(&d.path))
+                    .unwrap_or(crate::format::Format::Markdown);
+                (d.path.clone(), d.text.clone(), format)
+            })
+            .collect();
+        crate::refs::build_reference_views(&doc.text, &all)
+    }
+
     /// 检索命中的精确位置（PRD §7.1）。
     pub fn locate(&self, rel_path: &str, query: &str) -> Option<crate::locate::HitLocation> {
         crate::locate::locate_in_segments(&self.segments(rel_path), query)
@@ -417,11 +447,54 @@ impl crate::service::KnowledgeService for PrebuiltService {
     fn graph_snapshot(&self) -> crate::locate::GraphSnapshot {
         self.index.graph_snapshot()
     }
+
+    fn references(&self, rel_path: &str) -> Vec<crate::refs::ReferenceView> {
+        self.index.references(rel_path)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_index_without_refs_still_parses() {
+        let idx = sample_index();
+        let mut json: serde_json::Value =
+            serde_json::from_str(&idx.to_json().unwrap()).unwrap();
+        for d in json["docs"].as_array_mut().unwrap() {
+            d.as_object_mut().unwrap().remove("refs");
+        }
+        let legacy = PrebuiltIndex::from_json(&json.to_string()).unwrap();
+        assert!(legacy.docs.iter().all(|d| d.refs.is_empty()));
+        assert!(legacy.references("a.md").is_empty());
+    }
+
+    #[test]
+    fn references_roundtrip_through_json_and_recompute() {
+        let mut idx = sample_index();
+        idx.docs[1].text = "见 @a.md#第1段 的内容".into();
+        let all: Vec<(String, String, crate::format::Format)> = idx
+            .docs
+            .iter()
+            .map(|d| (d.path.clone(), d.text.clone(), crate::format::Format::Markdown))
+            .collect();
+        idx.docs[1].refs = crate::refs::build_reference_views(&idx.docs[1].text, &all);
+        assert_eq!(idx.docs[1].refs.len(), 1);
+        assert!(idx.docs[1].refs[0].resolved, "got {:#?}", idx.docs[1].refs);
+
+        let restored = PrebuiltIndex::from_json(&idx.to_json().unwrap()).unwrap();
+        assert_eq!(restored.docs[1].refs, idx.docs[1].refs);
+
+        // 旧产物缺 refs 时，运行期用同一套解析规则补算
+        let mut legacy = restored.clone();
+        for d in &mut legacy.docs {
+            d.refs.clear();
+        }
+        let recomputed = legacy.references("b.md");
+        assert_eq!(recomputed.len(), 1, "got {recomputed:#?}");
+        assert!(recomputed[0].resolved);
+    }
 
     fn sample_index() -> PrebuiltIndex {
         PrebuiltIndex {
@@ -437,6 +510,7 @@ mod tests {
                     modified_at: 1,
                     text: "模流分析是注塑成型前的重要仿真手段，用于评估浇口位置与熔接线位置。".into(),
                     segments: Vec::new(),
+                    refs: Vec::new(),
                 },
                 PrebuiltDoc {
                     path: "b.md".into(),
@@ -446,6 +520,7 @@ mod tests {
                     modified_at: 2,
                     text: "注射速度与熔体温度的基线取值，用于工艺评审。".into(),
                     segments: Vec::new(),
+                    refs: Vec::new(),
                 },
             ],
             links: vec![LinkRecord {

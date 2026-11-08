@@ -52,6 +52,15 @@ pub trait KnowledgeService: Send + Sync {
         crate::locate::GraphSnapshot::default()
     }
 
+    /// 跨格式引用视图（F-06）：文档里 `@文件#片段` 对应的源片段内容。
+    ///
+    /// Web 只读端返回构建期快照；Desktop 端应实时读取源文件，源更新后
+    /// 卡片内容随之刷新（PRD「源更新可刷新 / 标记变更」）。
+    /// 默认空：不支持该能力的后端不渲染引用卡片，不谎报能力。
+    fn references(&self, _rel_path: &str) -> Vec<crate::refs::ReferenceView> {
+        Vec::new()
+    }
+
     /// 是否支持用系统默认应用打开原始文档（F-08）。
     ///
     /// Web 端只有内嵌索引、没有本地文件，返回 false；

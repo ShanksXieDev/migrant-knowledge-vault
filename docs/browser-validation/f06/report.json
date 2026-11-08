@@ -1,0 +1,166 @@
+{
+  "url": "http://127.0.0.1:8101",
+  "browser": "Microsoft Edge (headless, Playwright)",
+  "keyword": "模流分析",
+  "keyword2": "仿真",
+  "searchTrigger": "Enter（无搜索按钮）",
+  "expectedDocs": 9,
+  "backlinkTarget": {
+    "path": "03-台账/模具台账.xlsx",
+    "inbound": 3
+  },
+  "passed": true,
+  "checks": [
+    {
+      "name": "A1 首屏渲染全部文档（内嵌索引生效）",
+      "ok": true,
+      "detail": "9 / 9 篇"
+    },
+    {
+      "name": "A2 顶栏显示内嵌索引与知识库名",
+      "ok": true,
+      "detail": "status=\"9 个文档 · 构建期内嵌产物\" root=\"sample-vault\""
+    },
+    {
+      "name": "A3 多格式文档均在列表",
+      "ok": true,
+      "detail": "Markdown, Visio, Drawio, Excel, Word, PowerPoint"
+    },
+    {
+      "name": "A4 点击文档切换预览",
+      "ok": true,
+      "detail": "title=\"01-笔记/模流分析-入门.md\""
+    },
+    {
+      "name": "A5 预览正文非空",
+      "ok": true,
+      "detail": "230 字符"
+    },
+    {
+      "name": "A6 Web 端无内置编辑按钮",
+      "ok": true,
+      "detail": "按钮数=0"
+    },
+    {
+      "name": "A7 显示只读提示",
+      "ok": true,
+      "detail": "提示=\"Web 端为只读索引\""
+    },
+    {
+      "name": "A8 双链反链面板",
+      "ok": true,
+      "detail": "目标=03-台账/模具台账.xlsx，界面 3 条 / 产物 3 条入链"
+    },
+    {
+      "name": "A9 回车触发中文检索并命中",
+      "ok": true,
+      "detail": "\"模流分析\" → 5 条"
+    },
+    {
+      "name": "A10 检索后自动切结果页签",
+      "ok": true,
+      "detail": "已切到「检索结果」"
+    },
+    {
+      "name": "A11 状态栏命中反馈",
+      "ok": true,
+      "detail": "检索「模流分析」命中 5 条"
+    },
+    {
+      "name": "A12 点击检索结果打开文档",
+      "ok": true,
+      "detail": "命中=\"模流分析-入门\" → 预览=\"01-笔记/模流分析-入门.md\""
+    },
+    {
+      "name": "A13 检索区无搜索按钮且提示回车",
+      "ok": true,
+      "detail": "按钮数=0，placeholder=\"搜索知识库…（回车检索，支持中文分词）\""
+    },
+    {
+      "name": "A14 仅输入不触发检索",
+      "ok": true,
+      "detail": "未回车：结果 5 条（应保持 5），status=\"检索「模流分析」命中 5 条\""
+    },
+    {
+      "name": "A15 二次回车检索生效",
+      "ok": true,
+      "detail": "\"仿真\" → 2 条，status=\"检索「仿真」命中 2 条\""
+    },
+    {
+      "name": "A16 清空回车恢复全部文档",
+      "ok": true,
+      "detail": "当前页签=\"全部文档\""
+    },
+    {
+      "name": "A17 Tab 切换正常",
+      "ok": true,
+      "detail": "9 篇"
+    },
+    {
+      "name": "B1 检索结果带精确位置标签",
+      "ok": true,
+      "detail": "5 条，首个=📍 第 1 段"
+    },
+    {
+      "name": "B2 点击结果跳到命中片段并高亮",
+      "ok": true,
+      "detail": "bar=\"📍 已定位：第 1 段\nMoldflow 模流分析是注塑成型前的重要仿真手段，用于评估浇口位置、熔接线位置与填充时间。\" active=1"
+    },
+    {
+      "name": "B3 聚焦正文含命中词",
+      "ok": true,
+      "detail": "68 字符 / 关键词 模流分析"
+    },
+    {
+      "name": "B4 查看全文清除定位并恢复全文",
+      "ok": true,
+      "detail": "68 → 230 字符，剩余高亮 0"
+    },
+    {
+      "name": "B5 关系图谱渲染节点与边",
+      "ok": true,
+      "detail": "9 节点 / 12 边，期望 9 节点"
+    },
+    {
+      "name": "B6 图谱缩放生效",
+      "ok": true,
+      "detail": "translate(220 180) scale(1) translate(-220 -180) → translate(220 180) scale(1.25) translate(-220 -180)"
+    },
+    {
+      "name": "B7 点选节点跳回文档预览",
+      "ok": true,
+      "detail": "当前页签=全部文档"
+    },
+    {
+      "name": "C1 引用处内联显示源片段内容",
+      "ok": true,
+      "detail": "4 张卡片，首张=\"📎 台账 · 第 2 行 · 模具台账.xlsx\n台账: PN-1024 | MDL-08\""
+    },
+    {
+      "name": "C2 刷新引用按钮可用",
+      "ok": true,
+      "detail": "status=\"已刷新 4 条跨格式引用\""
+    },
+    {
+      "name": "C3 点选引用跳到源文档并定位片段",
+      "ok": true,
+      "detail": "预览=\"03-台账/模具台账.xlsx\" 高亮片段=1"
+    },
+    {
+      "name": "A18 无未捕获 JS 异常",
+      "ok": true,
+      "detail": "0 个"
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "fatal": null,
+  "durationMs": 2116,
+  "screenshots": [
+    "docs\\browser-validation\\f06\\01-first-paint.png",
+    "docs\\browser-validation\\f06\\02-document-backlinks.png",
+    "docs\\browser-validation\\f06\\03-search-results.png",
+    "docs\\browser-validation\\f06\\04-graph-view.png",
+    "docs\\browser-validation\\f06\\05-reference-view.png"
+  ]
+}

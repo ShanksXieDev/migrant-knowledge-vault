@@ -195,6 +195,25 @@ impl KnowledgeService for NativeService {
             .collect();
         crate::locate::build_graph_snapshot(&nodes, &links)
     }
+
+    fn references(&self, rel_path: &str) -> Vec<crate::refs::ReferenceView> {
+        let Some(source) = self.read_document(rel_path) else {
+            return Vec::new();
+        };
+        // 先取全库清单再逐篇读正文，避免嵌套持有全局 Vault 锁。
+        // 每次调用都重新读取源文件，因此源更新后卡片内容会随之刷新。
+        let docs = self.documents();
+        let all: Vec<(String, String, crate::format::Format)> = docs
+            .iter()
+            .filter_map(|d| {
+                let text = self.read_document(&d.path)?;
+                let format = crate::format::Format::from_path(std::path::Path::new(&d.path))
+                    .unwrap_or(crate::format::Format::Markdown);
+                Some((d.path.clone(), text, format))
+            })
+            .collect();
+        crate::refs::build_reference_views(&source, &all)
+    }
 }
 
 /// 以只读方式访问已注册的知识库；未打开时返回 None。

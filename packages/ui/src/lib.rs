@@ -409,6 +409,39 @@ pub fn PreviewPane(ctx: VaultContext) -> Element {
         _ => segments.clone(),
     };
 
+    // F-06：把每条 `@文件#片段` 的源内容内联到它出现的正文里。
+    // refs 的 offset 是相对**整篇**正文的字节偏移，按段渲染时需换算成段内偏移。
+    // 不带引用语法的文档不会触发全库扫描（服务层已做短路）。
+    let refs = ctx.service.read().references(&current);
+    let ref_count = refs.len();
+    let visible_chunks: Vec<(
+        mkv_core::locate::TextSegment,
+        Vec<(Option<mkv_core::refs::ReferenceView>, String)>,
+    )> = visible
+        .iter()
+        .map(|seg| {
+            let start: usize = segments.iter().take(seg.index).map(|s| s.text.len()).sum();
+            let end = start + seg.text.len();
+            let local: Vec<mkv_core::refs::ReferenceView> = refs
+                .iter()
+                .filter(|v| v.offset >= start && v.offset.saturating_add(v.raw.len()) <= end)
+                .map(|v| {
+                    let mut inside = v.clone();
+                    inside.offset -= start;
+                    inside
+                })
+                .collect();
+            let parts = mkv_core::refs::render_chunks(&seg.text, &local)
+                .into_iter()
+                .map(|chunk| match chunk {
+                    mkv_core::refs::TextChunk::Plain(t) => (None, t),
+                    mkv_core::refs::TextChunk::Reference(v) => (Some(v), String::new()),
+                })
+                .collect();
+            (seg.clone(), parts)
+        })
+        .collect();
+
     rsx! {
         section { class: "mkv-preview",
             div { class: "mkv-preview-header",
@@ -451,6 +484,19 @@ pub fn PreviewPane(ctx: VaultContext) -> Element {
                 }
             }
             div { class: "mkv-preview-body",
+                if ref_count > 0 {
+                    div { class: "mkv-ref-bar",
+                        span { class: "mkv-muted", "{ref_count} 条跨格式引用 · 源片段已内联" }
+                        button {
+                            class: "mkv-btn mkv-btn-sm",
+                            onclick: move |_| {
+                                ctx.refresh();
+                                ctx.status.set(format!("已刷新 {ref_count} 条跨格式引用"));
+                            },
+                            "↻ 刷新引用"
+                        }
+                    }
+                }
                 if let Some(loc) = focus.as_ref() {
                     div { class: "mkv-location-bar",
                         span { class: "mkv-location-target", "📍 已定位：{loc.label}" }
@@ -463,20 +509,89 @@ pub fn PreviewPane(ctx: VaultContext) -> Element {
                     }
                 }
                 pre { class: "mkv-doc-content",
-                    for seg in visible.iter() {
+                    for (seg, parts) in visible_chunks.iter() {
                         span {
                             class: if Some(seg.index) == focus_idx {
                                 "mkv-segment mkv-segment-active"
                             } else {
                                 "mkv-segment"
                             },
-                            "{seg.text}"
+                            for (view, text) in parts.iter() {
+                                if let Some(v) = view {
+                                    ReferenceCard { ctx, view: v.clone() }
+                                } else {
+                                    "{text}"
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+/// F-06 内联引用卡片：在引用处显示源文档片段内容，点击跳到目标文档并定位。
+///
+/// `source_hash` 以短指纹形式给出；源文件更新后指纹随之变化，
+/// 配合 Desktop 的文件监听自动刷新与「↻ 刷新引用」按钮即可发现变更。
+#[component]
+pub fn ReferenceCard(ctx: VaultContext, view: mkv_core::refs::ReferenceView) -> Element {
+    let path = view.target_path.clone();
+    let label = view.label.clone();
+    let snippet = view.snippet.clone();
+    let raw = view.raw.clone();
+    let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+    let fingerprint = format!("#{:06x}", view.source_hash & 0x00ff_ffff);
+    let head = if view.resolved {
+        format!("📎 {} · {}", label, name)
+    } else {
+        format!("⚠ 引用未解析：{}", raw)
+    };
+    let body = snippet.clone();
+    let idx = view.segment_index;
+    let resolved = view.resolved;
+
+    rsx! {
+        button {
+            class: if resolved {
+                "mkv-ref-card"
+            } else {
+                "mkv-ref-card mkv-ref-unresolved"
+            },
+            title: "源片段内容指纹 {fingerprint}；指纹变化表示源已更新",
+            onclick: move |_| {
+                if !resolved {
+                    ctx.status.set(format!("引用未解析：{raw}"));
+                    return;
+                }
+                let mut current_doc = ctx.current_doc;
+                let mut backlinks = ctx.backlinks;
+                let mut list_mode = ctx.list_mode;
+                current_doc.set(path.clone());
+                backlinks.set(ctx.service.read().backlinks(&path));
+                ctx.focus.set(Some(mkv_core::locate::HitLocation {
+                    label: label.clone(),
+                    kind: "reference".to_string(),
+                    segment_index: idx,
+                    matched: String::new(),
+                    snippet: snippet.clone(),
+                }));
+                list_mode.set(ListMode::Documents);
+                ctx.status.set(format!("已跳到 {} 的 {}", name_of(&path), label));
+            },
+            if resolved {
+                span { class: "mkv-ref-card-head", "{head}" }
+                span { class: "mkv-ref-card-body", "{body}" }
+            } else {
+                span { class: "mkv-ref-card-head", "{head}" }
+            }
+        }
+    }
+}
+
+fn name_of(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
 }
 
 /// 侧栏图谱图例：节点数 / 边数与节点清单（纯展示，点选跳转在图谱画布里完成）。
