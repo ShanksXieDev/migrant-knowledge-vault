@@ -23,7 +23,7 @@ v0.1 工程脚手架：**Rust 核心库 + Dioxus 三端（Desktop / Web / Mobile
 | 内置编辑器   | ✅  | GridCraft（Excel）/ DeckCraft（PPT 完整编辑）/ WordCraft（Word），始终读写原生文件 |
 | Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**dx serve + Edge 真实浏览器 18/18 项验证通过** |
 | 文件监听    | ✅  | `notify` 增量索引 + 双链重算；实测索引 51ms、端到端 175ms（PRD 要求 1s 内）        |
-| 静态发布 / CI | ✅  | `scripts/publish-web.sh` 产出 6 文件纯静态站点；GitHub Actions 测试 + 浏览器回归门禁 |
+| 静态发布 / CI | ✅  | `scripts/publish-web.sh` 产出 6 文件纯静态站点；GitHub Actions 门禁 + Pages 自动发布已上线（[线上站点](https://shanksxiedev.github.io/migrant-knowledge-vault/)） |
 | UI 自动刷新 | ✅  | 索引修订号 + 250ms 轮询，文档列表 / 反链 / 检索结果自动重渲染 |
 | 外部唤起 F-08 | ✅  | 用系统默认应用打开原始文件（Windows `start` / macOS `open` / Linux `xdg-open`） |
 | 双链图谱视图  | 🚧 | 可视化引用关系，列入 v0.2                                                    |
@@ -427,6 +427,12 @@ python -m http.server 8080 --directory dist
 已用真实静态服务器 + Edge 跑过 **18/18 项浏览器回归，0 console error、0 未捕获异常**。
 报告：`docs/browser-validation/static-dist/`。
 
+**线上站点（已上线）**：<https://shanksxiedev.github.io/migrant-knowledge-vault/>
+（仓库 Settings → Pages → Source 设为 **GitHub Actions** 后，main 每次推送自动发布）。
+部署完成后又对**线上 URL** 跑了一次完整回归：**18/18 全通过、0 console error、
+0 未捕获异常、3.4s**；`index.html` / JS / wasm / `mkv-index.json` / `.nojekyll` /
+`deploy-info.json` 全部 HTTP 200。报告：`docs/browser-validation/pages-live/`。
+
 ### 12.3 索引更新：替换 JSON 即可
 
 默认索引内嵌于 wasm，更新需要重编译。若要「替换 JSON 即更新、免重编 wasm」：
@@ -452,11 +458,13 @@ HTTP 500 回落、空索引回落、顶栏知识库名同步。报告：`docs/br
 | 依赖 | wasm32 依赖树零 `tantivy / jieba / zstd / rusqlite / git2 / notify / cc` |
 | 构建 | `scripts/publish-web.sh` + 产物清单校验 |
 | 浏览器 | `dist/` 起静态服务 → Playwright Chromium 跑 18 项交互回归 |
-| 发布 | main 分支自动 `actions/deploy-pages`；PR 只验证不发布 |
+| 发布 | main 分支自动 `actions/deploy-pages`（run #7 已实测 success）；PR 只验证不发布 |
 
 CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—— Windows MSVC 的
 `link.exe` 链接 proc-macro DLL 会挂起，源码编译不可靠。
-启用 Pages 前需在仓库 Settings → Pages 把 Source 设为 **GitHub Actions**。
+仓库 Settings → Pages 的 Source 已设为 **GitHub Actions**（2026-11-08 核对通过）。
+`deploy` job 先用 `GITHUB_TOKEN` 探测 `/repos/{owner}/{repo}/pages`，未配置时跳过发布并给
+warning、不影响 `verify` 门禁；配置后 `actions/deploy-pages@v4` 自动执行，workflow 无需改动。
 
 ### 12.5 CI 首跑复盘（2026-11-08，真实 GitHub Actions）
 
@@ -477,6 +485,19 @@ CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—�
 
 **第 5 次 run（`12b49c1`）全绿**：总耗时 6m15s，`verify` 全部 15 步通过
 （含 Playwright Chromium 的 18 项交互回归）；`deploy` 因 Pages 未启用按设计跳过并给出 warning。
+
+### 12.6 Pages 自动发布闭环（2026-11-08）
+
+| 项 | 事实 |
+|---|---|
+| 触发 | Source 设为 GitHub Actions 后，空提交 `54664c4` 推送 main → **run #7** |
+| verify | 全部必需步骤通过（112 项测试 / 移动端编译 / wasm32 零 C 依赖 / release 构建 / Chromium 18 项回归 / 上传 Pages 产物） |
+| deploy | `pages_check` 探测到 Pages 已启用 → `actions/deploy-pages@v4` **success**（不再是 skipped） |
+| 线上产物 | `index.html` 560B、JS 48,795B、wasm 1,067,623B、`mkv-index.json` 10,565B，全部 HTTP 200 |
+| 线上回归 | 对线上 URL 用系统 Edge 跑 **18/18 全通过**，0 console error、0 未捕获异常，3.4s |
+
+> 从「push main」到「站点可访问」全自动，无人工上传步骤。
+> 后续每次 main 推送都会重跑门禁并重新发布；PR 只验证不发布。
 
 ---
 
@@ -532,13 +553,16 @@ CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—�
 
 ## 15. 下一步
 
-1. **启用 Pages 自动发布**：Settings → Pages → Source 设为 **GitHub Actions**，
-   再触发一次 main 推送核对 `deploy` 真正发布
+1. **产物体积优化**：`strip = false` 后 wasm 约 1.07MB；评估在 `Dioxus.toml` 启用 dx 的
+   `wasm-opt`（作用于 wasm-bindgen 输出之后），目标压回约 600KB，并用 18 项回归确认无损
 2. **双链图谱视图 F-10**：可视化引用关系
 3. **检索结果精确定位**：跳到页 / 单元格 / 段落（PRD §7.1 唯一未勾选项，依赖 F-06）
 4. **移动端真机验证**：CI 只能保证可编译
 5. **Desktop GUI 人工验收**：自动刷新与外部唤起的实际窗口行为
+6. **Node.js 20 警告**：CI 中 `actions/*` 的 Node 20 deprecation 提示，待官方迁移后评估升级
 
 > 2026-11-08：技术债务已清理，P0 文件监听、P1 静态发布（方案 A）+ CI 门禁、
 > Desktop UI 自动刷新与 F-08 外部唤起均已落地。代码已推送到 GitHub，
 > **CI 真实首跑已核对**并修掉 dx 校验和、wasm strip 等 Linux 专属问题（复盘见 §12.5）。
+> **Pages 自动发布已闭环**：run #7 的 `deploy-pages` 实测 success，
+> 线上站点 <https://shanksxiedev.github.io/migrant-knowledge-vault/> 18/18 项回归全绿（§12.6）。
