@@ -55,28 +55,6 @@ jobs:
           # 真正的版本自检放在体积门禁步骤里做（不满足能力要求会明确失败）。
           wasm-opt --version
 
-      - name: 预取 binaryen（wasm-opt）并自检
-        run: |
-          set -euo pipefail
-          # dx 构建时会把 binaryen 下到 ~/.dx/tools/binaryen-*/bin/，
-          # 但该下载走 GitHub Release 直链，网络抖动时可能失败（run #15 即如此：
-          # binaryen 没落地 → wasm 未被优化 → 体积门禁失败，且日志里没有任何线索）。
-          # 这里显式预取一次并验证可执行，失败不阻断（后续门禁会用 apt 的 binaryen 兜底），
-          # 但会把原因写进 annotation，便于无日志排障。
-          FOUND=""
-          for candidate in "$HOME"/.dx/tools/binaryen-*/bin/wasm-opt; do
-            if [ -x "$candidate" ]; then FOUND="$candidate"; break; fi
-          done
-          if [ -z "$FOUND" ]; then
-            FOUND="$(command -v wasm-opt || true)"
-          fi
-          if [ -z "$FOUND" ]; then
-            echo "::warning::未找到 wasm-opt（dx 缓存与 PATH 均无），体积门禁会明确失败"
-            exit 0
-          fi
-          echo "wasm-opt 路径：$FOUND"
-          echo "wasm-opt 版本：$("$FOUND" --version 2>&1 | head -n1)"
-
       - name: 安装 dx（官方预编译二进制 + sha256 校验）
         run: |
           set -euo pipefail
@@ -150,6 +128,79 @@ jobs:
           mkdir -p "$HOME/.cargo/bin"
           install -m 0755 "$DX_BIN" "$HOME/.cargo/bin/dx"
           dx --version
+
+          # ---------- 预装 binaryen（wasm-opt）到 dx 缓存目录 ----------
+          # dx 在 release 构建时会自行下载 binaryen 到 ~/.dx/tools/binaryen-<ver>/bin/，
+          # 该下载走 GitHub Release 直链，网络抖动时可能失败（run #15 即如此：
+          # binaryen 没落地 → publish-web.sh 找不到 wasm-opt → 静默跳过体积优化 →
+          # wasm 保持 1.27MB → 体积门禁失败）。
+          #
+          # 这里在 dx 装好之后「预先显式安装到 dx 期望的目录」，
+          # dx 检测到目录已存在就不再自行下载，从根上消除该失败模式。
+          # 版本号从 dx 可执行文件里探测（模板 binaryen-version_<ver>），
+          # 避免 dx 升级后目录名漂移导致预置对不上。
+          BINARYEN_VERSION="127"
+          DETECTED="$(grep -a -o 'binaryen-version_[0-9]\{3\}' "$HOME/.cargo/bin/dx" | head -n1 | grep -o '[0-9]\{3\}' || true)"
+          if [ -n "$DETECTED" ]; then
+            BINARYEN_VERSION="$DETECTED"
+            echo "从 dx 探测到 binaryen 版本：$BINARYEN_VERSION"
+          fi
+          BIN_ASSET="binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          TARGET_DIR="$HOME/.dx/tools/binaryen-${BINARYEN_VERSION}"
+          BIN_API="https://api.github.com/repos/WebAssembly/binaryen"
+
+          mkdir -p "$TARGET_DIR/bin"
+          if [ -x "$TARGET_DIR/bin/wasm-opt" ]; then
+            echo "binaryen 已存在：$TARGET_DIR/bin/wasm-opt"
+          else
+            echo "下载 $BIN_ASSET（直链优先，失败回退 API 资产通道）"
+            BIN_OK=0
+            for attempt in 1 2 3; do
+              if curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors -A "mkv-ci" \
+                   "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/${BIN_ASSET}" \
+                   -o binaryen.tar.gz; then
+                BIN_OK=1; break
+              fi
+              echo "  直链失败，尝试 API 资产通道"
+              BIN_ID="$(curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors -A "mkv-ci" \
+                "$BIN_API/releases/tags/version_${BINARYEN_VERSION}" \
+                | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(a['id'] for a in d['assets'] if a['name']=='$BIN_ASSET'))" 2>/dev/null || true)"
+              if [ -n "$BIN_ID" ] && curl -fsSL --retry 2 --retry-delay 3 --retry-all-errors \
+                   -H "Accept: application/octet-stream" -A "mkv-ci" \
+                   "$BIN_API/releases/assets/$BIN_ID" -o binaryen.tar.gz; then
+                BIN_OK=1; break
+              fi
+              echo "  第 $attempt 次下载失败，5 秒后重试"
+              sleep 5
+            done
+            if [ "$BIN_OK" != "1" ]; then
+              # 不阻断：apt 的 binaryen 仍在 PATH 上作为兜底；
+              # 但把原因写进 annotation，避免又一次「门禁失败却无线索」。
+              echo "::warning::binaryen 下载失败，将退回 apt 的 wasm-opt（版本可能偏旧）"
+              rm -f binaryen.tar.gz
+            else
+              # binaryen 官方 tar 解压后是 binaryen-version_<ver>/bin/wasm-opt
+              rm -rf binaryen-extract
+              mkdir -p binaryen-extract
+              tar -xzf binaryen.tar.gz -C binaryen-extract
+              BIN_PATH="$(find binaryen-extract -type f -name wasm-opt | head -n1)"
+              if [ -n "$BIN_PATH" ]; then
+                cp "$BIN_PATH" "$TARGET_DIR/bin/wasm-opt"
+                chmod +x "$TARGET_DIR/bin/wasm-opt"
+              else
+                echo "::warning::binaryen 压缩包中未找到 wasm-opt"
+              fi
+              rm -rf binaryen-extract binaryen.tar.gz
+            fi
+          fi
+
+          if [ -x "$TARGET_DIR/bin/wasm-opt" ]; then
+            echo "wasm-opt 路径：$TARGET_DIR/bin/wasm-opt"
+            echo "wasm-opt 版本：$("$TARGET_DIR/bin/wasm-opt" --version 2>&1 | head -n1)"
+          else
+            echo "::warning::dx 缓存目录中无 wasm-opt，退回 PATH 上的：$(command -v wasm-opt || echo 无)"
+            wasm-opt --version || true
+          fi
 
       # ---------- 质量门禁 1：全量测试（P0 bug = 0） ----------
       - name: 全量测试
