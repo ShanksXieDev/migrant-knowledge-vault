@@ -77,7 +77,19 @@ jobs:
 
       # ---------- 质量门禁 1：全量测试（P0 bug = 0） ----------
       - name: 全量测试
-        run: cargo test --workspace
+        run: |
+          set +e
+          cargo test --workspace 2>&1 | tee /tmp/mkv-cargo-test.log
+          RC=${PIPESTATUS[0]}
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::cargo test --workspace 失败（exit ${RC}），关键输出如下："
+            # 把错误行写成 annotations：公开仓库可直接通过 check-runs API 读取，无需 admin 下载日志
+            grep -nE "^error|error\[E|panicked at|FAILED|failures:|test result: FAILED|could not compile|undefined reference|No such file|not found" \
+              /tmp/mkv-cargo-test.log | tail -30 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit "$RC"
 
       - name: 移动端编译门禁（真机验证仍需人工，见 README）
         run: cargo build -p mkv-mobile
@@ -133,6 +145,14 @@ jobs:
         with:
           name: browser-validation
           path: docs/browser-validation/
+          if-no-files-found: ignore
+
+      - name: 上传失败诊断日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics
+          path: /tmp/mkv-cargo-test.log
           if-no-files-found: ignore
 
       - name: 上传 Pages 产物
