@@ -647,6 +647,14 @@ wasm-opt `version 127 (version_127)`），`wasm_opt_issue = None`，
 对**线上 URL** 用系统 Edge 跑完整 **28/28 全通过**，0 console error、0 page error，
 4.33s，报告与截图：`docs/browser-validation/pages-live-ci-fallback/`。
 
+**二次实证（run #25，提交 `aad3f52`）**：文档回填提交再次触发自动发布，
+**run #25 `42474866526` Success**（11:14:32Z → 11:21:13Z）——全部门禁 + `deploy-pages`
+再次 success。线上 `generated_at` 刷新为 `11:20:35Z`，wasm 仍为
+`1,274,581B → 724,441B`（与 run #23 逐字节一致，说明产物可复现），
+首页 / 索引 / 元数据 / `.nojekyll` 全部 HTTP 200，线上回归再次 **28/28 全通过**
+（报告与截图：`docs/browser-validation/pages-live-run25/`）。
+即修复后连续两次（#23 / #25）全绿，CI 兜底通道与工作流稳定性得到实证。
+
 ### 12.7 wasm 体积优化（wasm-opt）
 
 `dx build --release` 默认 `--debug-symbols=true`，产物里带大量 DWARF 调试段；
@@ -841,4 +849,5 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 > 随后为 dx / binaryen / wasm-bindgen 三类外部依赖各补一条与 GitHub 无关的链路
 > （crates.io 源码编译 / apt 兜底），**run #23 `42473188254` Success**，
 > 其中 wasm-bindgen 的 crates.io 兜底在真实 CI 中确实触发并救活了流水线；
-> 线上 28/28 项浏览器回归全绿，CI/Linux wasm 1,274,581B → 724,441B。
+> 线上 28/28 项浏览器回归全绿，CI/Linux wasm 1,274,581B → 724,441B；
+> **run #25 `42474866526` 二次实证 Success**，产物逐字节一致、线上回归再次 28/28。
