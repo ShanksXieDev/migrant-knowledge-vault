@@ -3,6 +3,7 @@
 //! 仅在 `native` 特性（Desktop / Mobile）下编译。
 //! 包装 [`crate::vault::Vault`]，向 UI 层暴露只读的 [`KnowledgeService`] 接口。
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::error::Result;
@@ -13,6 +14,24 @@ use crate::vault::Vault;
 fn slot() -> &'static Mutex<Option<Vault>> {
     static SLOT: OnceLock<Mutex<Option<Vault>>> = OnceLock::new();
     SLOT.get_or_init(|| Mutex::new(None))
+}
+
+fn revision_counter() -> &'static AtomicU64 {
+    static REVISION: AtomicU64 = AtomicU64::new(0);
+    &REVISION
+}
+
+/// 索引修订号：每批**成功落盘**的增量变更 +1。
+///
+/// Desktop UI 轮询此值触发自动刷新，而不是让后台监听线程直接写 Dioxus Signal
+/// （Signal 必须在 UI runtime 内写入）。纯原子操作，不持有 Vault 锁。
+pub fn revision() -> u64 {
+    revision_counter().load(Ordering::SeqCst)
+}
+
+/// 手动标记一次索引变更（供测试与将来其它写入路径复用）。
+pub fn bump_revision() {
+    revision_counter().fetch_add(1, Ordering::SeqCst);
 }
 
 /// 打开并注册当前知识库（替换已有的）。
@@ -64,7 +83,11 @@ pub fn apply_changes(
     let vault = guard
         .as_mut()
         .ok_or_else(|| crate::Error::Config("知识库未打开".into()))?;
-    crate::watcher::apply_changes(vault, changes)
+    let report = crate::watcher::apply_changes(vault, changes)?;
+    if report.upserted + report.removed > 0 {
+        bump_revision();
+    }
+    Ok(report)
 }
 
 /// 提交一次 Git 版本。
@@ -130,7 +153,21 @@ impl KnowledgeService for NativeService {
         let vault = guard
             .as_mut()
             .ok_or_else(|| crate::Error::Config("知识库未打开".into()))?;
-        vault.save_editor(session)
+        vault.save_editor(session)?;
+        // 内置编辑保存同样要触发 UI 刷新（即使没有外部文件事件）。
+        bump_revision();
+        Ok(())
+    }
+
+    fn supports_external_open(&self) -> bool {
+        true
+    }
+
+    fn open_externally(&self, rel_path: &str) -> crate::Result<()> {
+        match with(|v| v.open_externally(rel_path)) {
+            Some(result) => result,
+            None => Err(crate::Error::Config("知识库未打开".into())),
+        }
     }
 }
 

@@ -11,3 +11,5 @@ description = "Migrant Knowledge Vault 桌面端（Dioxus desktop）"
 mkv-core = { workspace = true, features = ["native"] }
 mkv-ui.workspace = true
 dioxus = { workspace = true, features = ["desktop", "launch", "macro", "signals", "hooks", "html"] }
+# Dioxus desktop 自带 tokio runtime，这里只启用 timer 用于 UI 自动刷新轮询
+tokio = { version = "1", features = ["time"] }

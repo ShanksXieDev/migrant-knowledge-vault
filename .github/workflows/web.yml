@@ -146,5 +146,25 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # 新仓库默认未启用 Pages，直接 deploy-pages 会报「需要先配置 Pages」，
+      # 让质量门禁看起来像失败。这里先探测，未配置则跳过发布并给出提示。
+      - name: 检查 Pages 是否已启用 GitHub Actions 构建
+        id: pages_check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          CODE="$(curl -sS -o /tmp/mkv-pages.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages")"
+          if [ "$CODE" = "200" ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo "::warning::GitHub Pages 尚未配置（Settings → Pages → Source: GitHub Actions），本次跳过发布；verify 门禁不受影响。"
+          fi
       - id: deployment
+        if: steps.pages_check.outputs.enabled == 'true'
         uses: actions/deploy-pages@v4

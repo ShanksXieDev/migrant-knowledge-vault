@@ -68,6 +68,21 @@ fn App() -> Element {
         status.set(format!("已就绪 · {count} 个文档"));
     });
 
+    // 自动刷新：后台监听线程只负责更新索引并 bump 原子修订号，
+    // 这里在 UI runtime 内轮询并写 Signal（Dioxus Signal 不能跨线程写）。
+    // 250ms 轮询与 P0 的 1 秒指标对齐：索引落盘后最多 250ms 界面即刷新。
+    use_future(move || async move {
+        let mut last = mkv_core::native::revision();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let now = mkv_core::native::revision();
+            if now != last {
+                last = now;
+                ctx.refresh();
+            }
+        }
+    });
+
     rsx! {
         AppShell { ctx }
     }

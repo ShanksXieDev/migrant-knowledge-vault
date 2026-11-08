@@ -79,6 +79,11 @@ pub struct VaultContext {
     pub view_mode: Signal<ViewMode>,
     /// 侧栏列表模式（全部文档 / 检索结果）。
     pub list_mode: Signal<ListMode>,
+    /// 索引修订号：后台文件监听每批变更后 +1。
+    ///
+    /// 各视图组件订阅它，从而在索引变化时**自动重渲染**，
+    /// 不再需要用户手动切页签 / 重新检索。Web 端只读索引恒为 0。
+    pub revision: Signal<u64>,
 }
 
 impl VaultContext {
@@ -96,6 +101,7 @@ impl VaultContext {
             edit_session: Signal::new(None),
             view_mode: Signal::new(ViewMode::Preview),
             list_mode: Signal::new(ListMode::Documents),
+            revision: Signal::new(0),
         }
     }
 
@@ -104,6 +110,33 @@ impl VaultContext {
         Self::with_service(Box::new(mkv_core::service::NullService))
     }
 
+    /// 索引变更后刷新所有派生视图（Desktop 自动刷新调用）。
+    ///
+    /// 递增 `revision` 让订阅它的组件重渲染；同时重算缓存的反链与检索结果，
+    /// 避免它们停留在旧快照。用 `peek()` 读取以免本方法自己订阅信号、
+    /// 被自己触发的 `set` 反向唤醒形成循环。
+    pub fn refresh(&self) {
+        let mut revision = self.revision;
+        let next = revision.peek().wrapping_add(1);
+        revision.set(next);
+
+        let service = self.service.peek();
+        let current = self.current_doc.peek().clone();
+        if !current.is_empty() {
+            let mut backlinks = self.backlinks;
+            backlinks.set(service.backlinks(&current));
+        }
+        let query = self.query.peek().clone();
+        if !query.trim().is_empty() {
+            let mut results = self.results;
+            results.set(service.search(&query, 20));
+        }
+        let count = service.document_count();
+        drop(service);
+
+        let mut status = self.status;
+        status.set(format!("已自动刷新 · {count} 个文档"));
+    }
 }
 
 impl Default for VaultContext {
@@ -191,6 +224,8 @@ pub fn SideBar(ctx: VaultContext) -> Element {
 /// 桌面端来自 Vault 的文档表。
 #[component]
 pub fn DocList(ctx: VaultContext) -> Element {
+    // 订阅索引修订号：后台增量更新后文档列表自动重渲染
+    let _revision = *ctx.revision.read();
     let docs = ctx.service.read().documents();
 
     rsx! {
@@ -233,6 +268,7 @@ pub fn DocItem(ctx: VaultContext, doc: DocumentRecord) -> Element {
 /// 检索结果列表。
 #[component]
 pub fn ResultList(ctx: VaultContext) -> Element {
+    let _revision = *ctx.revision.read();
     let results = ctx.results.read().clone();
 
     rsx! {
@@ -301,6 +337,7 @@ pub fn MainPane(ctx: VaultContext) -> Element {
 /// 预览区（含编辑入口）。
 #[component]
 pub fn PreviewPane(ctx: VaultContext) -> Element {
+    let _revision = *ctx.revision.read();
     let current = ctx.current_doc.read().clone();
     let content = ctx.service.read().read_document(&current).unwrap_or_default();
 
@@ -315,6 +352,10 @@ pub fn PreviewPane(ctx: VaultContext) -> Element {
         .map(|f| f.has_builtin_editor())
         .unwrap_or(false);
     let editable = backend_editable && format_editable;
+    // F-08：外部唤起只在有本地文件的后端可用（Web 只读索引恒为 false）。
+    // 单独克隆一份路径，避免与「内置编辑」的事件闭包争用同一个 String。
+    let external_path = current.clone();
+    let external_available = ctx.service.read().supports_external_open();
 
     rsx! {
         section { class: "mkv-preview",
@@ -342,6 +383,19 @@ pub fn PreviewPane(ctx: VaultContext) -> Element {
                     } else if !backend_editable {
                         span { class: "mkv-muted", "Web 端为只读索引" }
                     }
+                    if external_available {
+                        button {
+                            class: "mkv-btn mkv-btn-sm",
+                            onclick: move |_| {
+                                let mut status = ctx.status;
+                                match ctx.service.read().open_externally(&external_path) {
+                                    Ok(()) => status.set("已用系统默认应用打开".to_string()),
+                                    Err(e) => status.set(format!("外部唤起失败: {e}")),
+                                }
+                            },
+                            "用系统应用打开"
+                        }
+                    }
                 }
             }
             div { class: "mkv-preview-body",
@@ -354,6 +408,7 @@ pub fn PreviewPane(ctx: VaultContext) -> Element {
 /// 双链面板：显示当前文档的反链。
 #[component]
 pub fn BacklinkPanel(ctx: VaultContext) -> Element {
+    let _revision = *ctx.revision.read();
     let current = ctx.current_doc.read().clone();
     let backlinks = ctx.backlinks.read().clone();
 

@@ -259,6 +259,39 @@ impl Vault {
         }
     }
 
+    /// 构造 F-08 外部唤起目标（纯构造，不启动进程，便于单测）。
+    ///
+    /// 三重校验：格式在六种受支持格式内、路径不逃逸出知识库根目录、文件真实存在。
+    pub fn external_open_target(&self, rel_path: &str) -> Result<crate::editor::EditorTarget> {
+        if Format::from_path(Path::new(rel_path)).is_none() {
+            return Err(Error::UnsupportedFormat(rel_path.to_string()));
+        }
+        if rel_path.replace('\\', "/").split('/').any(|s| s == "..") {
+            return Err(Error::Config(format!(
+                "非法路径（试图逃逸出知识库根目录）: {rel_path}"
+            )));
+        }
+        let abs = self
+            .storage
+            .absolute_path(rel_path)
+            .ok_or_else(|| Error::Config(format!("该后端不支持本地路径: {rel_path}")))?;
+        if !abs.exists() {
+            return Err(Error::NotFound(abs));
+        }
+        Ok(crate::editor::EditorTarget::External {
+            program: String::new(), // 空 = 系统默认应用
+            path: abs,
+        })
+    }
+
+    /// 用系统默认应用打开原始文档（F-08）。
+    ///
+    /// 只负责唤起，不等待进程退出；用户保存后由 P0 文件监听增量更新索引与双链。
+    pub fn open_externally(&self, rel_path: &str) -> Result<()> {
+        let target = self.external_open_target(rel_path)?;
+        crate::editor::EditorRouter::launch_external(&target)
+    }
+
     /// 保存内置编辑结果：写回原生文件 → 增量重建该文档的索引与双链。
     ///
     /// 返回是否成功（写盘成功但索引更新失败时返回错误并说明阶段）。

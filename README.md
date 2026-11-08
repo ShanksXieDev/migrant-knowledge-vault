@@ -24,6 +24,8 @@ v0.1 工程脚手架：**Rust 核心库 + Dioxus 三端（Desktop / Web / Mobile
 | Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**dx serve + Edge 真实浏览器 18/18 项验证通过** |
 | 文件监听    | ✅  | `notify` 增量索引 + 双链重算；实测索引 51ms、端到端 175ms（PRD 要求 1s 内）        |
 | 静态发布 / CI | ✅  | `scripts/publish-web.sh` 产出 6 文件纯静态站点；GitHub Actions 测试 + 浏览器回归门禁 |
+| UI 自动刷新 | ✅  | 索引修订号 + 250ms 轮询，文档列表 / 反链 / 检索结果自动重渲染 |
+| 外部唤起 F-08 | ✅  | 用系统默认应用打开原始文件（Windows `start` / macOS `open` / Linux `xdg-open`） |
 | 双链图谱视图  | 🚧 | 可视化引用关系，列入 v0.2                                                    |
 
 ---
@@ -105,7 +107,7 @@ source scripts/msvc-env.sh
 ```bash
 source scripts/msvc-env.sh
 
-cargo test --workspace     # 103 个测试（core 84 / ui 3 / web 16）
+cargo test --workspace     # 112 个测试（core 89 / ui 7 / web 16）
 cargo build --workspace    # 产出 mkv / mkv-desktop / mkv-web / mkv-mobile
 
 # Web 端（wasm32）需先安装目标
@@ -388,8 +390,8 @@ cargo run -p mkv-cli -- watch D:/MyVault --debounce 200 --auto-commit
 **175ms**（含 OS 事件与 80ms 去抖），远低于 1 秒硬指标；覆盖新建 / 删除 / 改名 /
 「后来才新建」的链接目标补链 / 目标删除后反链归零。
 
-> 已知限制：Desktop 端索引在后台更新，UI 需一次交互（切页签 / 重新检索）才刷新列表，
-> 自动重渲染列入后续增强。
+> UI 刷新已闭环：Desktop 端由 `VaultContext::revision` + 250ms 轮询自动重渲染（见 §13），
+> 不再需要手动交互。
 
 ### 11.4 顺带修掉的两个缺陷
 
@@ -444,7 +446,7 @@ HTTP 500 回落、空索引回落、顶栏知识库名同步。报告：`docs/br
 
 | 门禁 | 内容 |
 |---|---|
-| 测试 | `cargo test --workspace`（103 项全绿） |
+| 测试 | `cargo test --workspace`（112 项全绿） |
 | 移动端 | `cargo build -p mkv-mobile` 编译门禁；**真机验证仍需人工** |
 | 依赖 | wasm32 依赖树零 `tantivy / jieba / zstd / rusqlite / git2 / notify / cc` |
 | 构建 | `scripts/publish-web.sh` + 产物清单校验 |
@@ -457,7 +459,49 @@ CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—�
 
 ---
 
-## 13. 相关文档
+## 13. Desktop UI 自动刷新与 F-08 外部唤起
+
+### 13.1 UI 自动刷新（消除「需一次交互才刷新」）
+
+| 环节 | 做法 |
+|---|---|
+| 变更信号 | `mkv-core::native::revision()`：`AtomicU64`，每批成功落盘的增量变更 / 内置编辑保存后 +1 |
+| UI 订阅 | `VaultContext::revision: Signal<u64>`；`DocList` / `ResultList` / `PreviewPane` / `BacklinkPanel` 均读取它 |
+| 刷新时机 | Desktop 在 **UI runtime 内**用 `use_future` + `tokio::time::sleep(250ms)` 轮询，变化即 `ctx.refresh()` |
+| 刷新内容 | 递增修订号触发重渲染；重算反链、重跑当前检索、更新状态栏文档数 |
+
+> 关键约束：后台监听线程**不能**直接写 Dioxus Signal（必须在 runtime 内），
+> 因此用原子修订号做桥，而不是跨线程 `set`。250ms 轮询与 P0 的 1 秒指标对齐。
+
+### 13.2 F-08 用系统默认应用打开原始文档
+
+预览区新增「用系统应用打开」按钮，仅在有本地文件的后端出现（Web 只读索引不显示）。
+
+| 平台 | 命令 |
+|---|---|
+| Windows | `cmd /C start "" <绝对路径>`（第一个空串是窗口标题） |
+| macOS | `open <绝对路径>` |
+| Linux / BSD | `xdg-open <绝对路径>` |
+
+- 路由层不再硬编码 `excel.exe` / `visio.exe`（既不在 PATH、也只在 Windows 存在），
+  改为交给系统文件关联；需要指定程序仍可用 `EditorRouter::set_external_program`。
+- 三重校验：格式在六种受支持格式内、`..` 路径逃逸被拒、文件真实存在。
+- 只 `spawn` 不 `wait`；用户在外部应用保存后由 P0 文件监听增量更新索引与双链，
+  再由 §13.1 自动刷新界面，形成闭环。
+- `KnowledgeService` 新增 `supports_external_open()` / `open_externally()`；
+  Web 只读后端默认返回明确错误，不静默失败。
+
+### 13.3 验证与未覆盖项
+
+`packages/core/tests/external_open.rs`（2 项）+ `packages/ui/tests/desktop_features.rs`（4 项）
++ `editor.rs` 新增 3 项单测；`cargo test --workspace` 共 **112 项全绿**。
+
+> ⚠️ 未做真机验证：Desktop GUI 窗口与「真的打开 Office / Visio」需要人工点击验收；
+> CI 只能保证编译通过、命令构造与路径安全正确。
+
+---
+
+## 14. 相关文档
 
 - `../本地个人知识库-需求描述.md` —— 需求主文档（v1.2）
 - `../技术方案设计.md` —— 技术方案与已确认决策清单
@@ -465,12 +509,14 @@ CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—�
 
 ---
 
-## 14. 下一步
+## 15. 下一步
 
-1. **Desktop UI 自动刷新**：文件监听已更新索引，列表 / 反链目前需交互触发重渲染
-2. **F-08 外部唤起编辑**：路由层已就绪，接系统默认应用
-3. **双链图谱视图 F-10**：可视化引用关系
-4. **检索结果精确定位**：跳到页 / 单元格 / 段落（PRD §7.1 唯一未勾选项，依赖 F-06）
-5. **移动端真机验证**：CI 只能保证可编译
+1. **CI 首跑核对**：仓库创建并推送 main 后，核对 GitHub Actions 首跑
+   （⚠️ 截至 2026-11-08，workflow 尚未在真实 runner 上执行过）
+2. **双链图谱视图 F-10**：可视化引用关系
+3. **检索结果精确定位**：跳到页 / 单元格 / 段落（PRD §7.1 唯一未勾选项，依赖 F-06）
+4. **移动端真机验证**：CI 只能保证可编译
+5. **Desktop GUI 人工验收**：自动刷新与外部唤起的实际窗口行为
 
-> 2026-11-08：技术债务已清理，P0 文件监听与 P1 静态发布（方案 A）+ CI 门禁均已落地。
+> 2026-11-08：技术债务已清理，P0 文件监听、P1 静态发布（方案 A）+ CI 门禁、
+> Desktop UI 自动刷新与 F-08 外部唤起均已落地。CI workflow 的真实首跑待仓库推送后核对。

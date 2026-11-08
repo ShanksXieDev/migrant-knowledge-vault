@@ -40,6 +40,21 @@ pub trait KnowledgeService: Send + Sync {
         "就绪".to_string()
     }
 
+    /// 是否支持用系统默认应用打开原始文档（F-08）。
+    ///
+    /// Web 端只有内嵌索引、没有本地文件，返回 false；
+    /// Desktop / Mobile 的本地知识库返回 true。
+    fn supports_external_open(&self) -> bool {
+        false
+    }
+
+    /// 用系统默认应用打开原始文档（Windows `start` / macOS `open` / Linux `xdg-open`）。
+    ///
+    /// 默认不支持：Web 只读后端应给出明确错误，而不是静默失败。
+    fn open_externally(&self, _rel_path: &str) -> crate::Result<()> {
+        Err(crate::Error::Config("当前后端不支持外部唤起".into()))
+    }
+
     /// 是否支持内置编辑（GridCraft / DeckCraft / WordCraft）。
     ///
     /// Web 端为预构建只读索引，返回 false。

@@ -122,6 +122,51 @@ pub enum EditorTarget {
     },
 }
 
+/// 系统默认应用的启动命令（F-08）。
+///
+/// 抽成纯函数：不必真的启动进程就能被单测覆盖，也避免把平台判断散落到 UI 层。
+/// - Windows：`cmd /C start "" <path>`（第一个空串是窗口标题，缺了会把路径当标题）
+/// - macOS：`open <path>`
+/// - Linux / BSD：`xdg-open <path>`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalOpenCommand {
+    pub program: &'static str,
+    pub args: Vec<String>,
+}
+
+pub fn system_open_command(path: &std::path::Path) -> ExternalOpenCommand {
+    let p = path.to_string_lossy().to_string();
+    #[cfg(target_os = "windows")]
+    {
+        ExternalOpenCommand {
+            program: "cmd",
+            args: vec!["/C".into(), "start".into(), String::new(), p],
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        ExternalOpenCommand {
+            program: "open",
+            args: vec![p],
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        ExternalOpenCommand {
+            program: "xdg-open",
+            args: vec![p],
+        }
+    }
+    #[cfg(not(any(target_os = "windows", unix)))]
+    {
+        // wasm32 等非原生目标仅保证可编译，不会真正执行。
+        ExternalOpenCommand {
+            program: "xdg-open",
+            args: vec![p],
+        }
+    }
+}
+
 /// 内置编辑器接口。
 ///
 /// v0.1 提供骨架实现；实际编辑 UI 在 Desktop / Web 端通过 `mkv-ui` 挂载。
@@ -239,7 +284,11 @@ impl Default for EditorRouter {
 }
 
 impl EditorRouter {
-    /// 构建默认路由器（内置三件套 + Windows 默认外部程序）。
+    /// 构建默认路由器（内置三件套 + 系统默认应用）。
+    ///
+    /// F-08：外部唤起默认**交给操作系统决定用哪个应用**（文件关联），
+    /// 不再硬编码 `excel.exe` / `visio.exe` 这类既不在 PATH、
+    /// 也只在 Windows 存在的程序名。需要指定程序时用 [`Self::set_external_program`]。
     pub fn new() -> Self {
         Self {
             builtin: vec![
@@ -247,13 +296,7 @@ impl EditorRouter {
                 Box::new(DeckCraft),
                 Box::new(WordCraft),
             ],
-            external_programs: vec![
-                (Format::Excel, "excel.exe".into()),
-                (Format::PowerPoint, "powerpnt.exe".into()),
-                (Format::Word, "winword.exe".into()),
-                (Format::Visio, "visio.exe".into()),
-                (Format::Drawio, "drawio.exe".into()),
-            ],
+            external_programs: Vec::new(),
         }
     }
 
@@ -285,14 +328,14 @@ impl EditorRouter {
                 let abs = storage.absolute_path(rel_path).ok_or_else(|| {
                     Error::Config(format!("该后端不支持本地路径: {rel_path}"))
                 })?;
+                // 空字符串表示「用系统默认应用」；只有显式 set_external_program
+                // 才使用指定可执行文件。六种格式因此都能被外部唤起。
                 let program = self
                     .external_programs
                     .iter()
                     .find(|(f, _)| *f == format)
                     .map(|(_, p)| p.clone())
-                    .ok_or_else(|| {
-                        Error::Config(format!("{} 没有可用的外部编辑程序", format.label()))
-                    })?;
+                    .unwrap_or_default();
                 Ok(EditorTarget::External { program, path: abs })
             }
             EditMode::Builtin => {
@@ -316,6 +359,10 @@ impl EditorRouter {
     }
 
     /// 执行外部唤起（仅 Native 平台可用）。
+    ///
+    /// `program` 为空时按 F-08 走系统默认应用；非空则为显式指定的程序。
+    /// 只 `spawn` 不 `wait`：Office / Visio 等应用由用户自行关闭，
+    /// 之后保存文件会由 P0 文件监听自动增量重建索引与双链。
     pub fn launch_external(target: &EditorTarget) -> Result<()> {
         let EditorTarget::External { program, path } = target else {
             return Err(Error::Config("目标不是外部编辑程序".into()));
@@ -323,10 +370,15 @@ impl EditorRouter {
         if !path.exists() {
             return Err(Error::NotFound(path.clone()));
         }
-        std::process::Command::new(program)
-            .arg(path)
-            .spawn()
-            .map_err(|e| Error::Config(format!("启动 {program} 失败: {e}")))?;
+        let spawned = if program.is_empty() {
+            let cmd = system_open_command(path);
+            std::process::Command::new(cmd.program)
+                .args(&cmd.args)
+                .spawn()
+        } else {
+            std::process::Command::new(program).arg(path).spawn()
+        };
+        spawned.map_err(|e| Error::Config(format!("外部唤起失败: {e}")))?;
         Ok(())
     }
 }
@@ -493,6 +545,77 @@ mod tests {
         assert!(matches!(err, Error::Config(_)));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn system_open_command_uses_os_default_app() {
+        let cmd = system_open_command(std::path::Path::new("D:/我的库/模具台账.xlsx"));
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(cmd.program, "cmd");
+            assert_eq!(cmd.args[0], "/C");
+            assert_eq!(cmd.args[1], "start");
+            assert_eq!(cmd.args[2], "", "start 的第一个引号参数是窗口标题");
+            assert!(cmd.args[3].contains("模具台账.xlsx"));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(cmd.program, "open");
+            assert!(cmd.args[0].contains("模具台账.xlsx"));
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            assert_eq!(cmd.program, "xdg-open");
+            assert!(cmd.args[0].contains("模具台账.xlsx"));
+        }
+    }
+
+    #[test]
+    fn external_route_defaults_to_system_app_and_allows_override() {
+        let dir = sample_vault("external");
+        let storage = FsStorage::new(&dir);
+        let router = EditorRouter::new();
+
+        // 六种格式都能路由到系统默认应用（这里用无内置编辑器的 Drawio / Visio 验证）
+        for (path, format) in [
+            ("02-图示/评审流程.drawio", Format::Drawio),
+            ("02-图示/模具布局.vsdx", Format::Visio),
+        ] {
+            let t = router
+                .route(&storage, path, format, EditMode::External)
+                .unwrap();
+            match t {
+                EditorTarget::External { program, path: abs } => {
+                    assert!(program.is_empty(), "默认应交给系统默认应用");
+                    assert!(abs.exists(), "目标文件应真实存在: {}", abs.display());
+                }
+                _ => panic!("expected external"),
+            }
+        }
+
+        let mut router = EditorRouter::new();
+        router.set_external_program(Format::Drawio, "my-drawio");
+        let t = router
+            .route(&storage, "02-图示/评审流程.drawio", Format::Drawio, EditMode::External)
+            .unwrap();
+        assert!(matches!(
+            t,
+            EditorTarget::External { program, .. } if program == "my-drawio"
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn launch_external_rejects_missing_file_without_spawning() {
+        let target = EditorTarget::External {
+            program: String::new(),
+            path: std::env::temp_dir().join(format!("mkv-missing-{}.docx", std::process::id())),
+        };
+        assert!(matches!(
+            EditorRouter::launch_external(&target),
+            Err(Error::NotFound(_))
+        ));
     }
 
     #[test]
