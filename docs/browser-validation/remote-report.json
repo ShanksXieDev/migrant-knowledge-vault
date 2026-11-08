@@ -8,7 +8,7 @@
     {
       "name": "R1 远端有效产物触发热替换",
       "ok": true,
-      "detail": "status=\"2 个文档 · 远端产物（http://127.0.0.1:8081/remote-index.json）\" 文档=2（远端应 2）"
+      "detail": "status=\"2 个文档 · 远端产物（/remote-index.json）\" 文档=2（远端应 2）"
     },
     {
       "name": "R2 热替换后知识库名同步更新",
@@ -83,7 +83,7 @@
   ],
   "observations": {
     "valid": {
-      "status": "2 个文档 · 远端产物（http://127.0.0.1:8081/remote-index.json）",
+      "status": "2 个文档 · 远端产物（/remote-index.json）",
       "root": "remote-updated-vault",
       "docCount": 2,
       "pageErrors": [],
@@ -180,5 +180,5 @@
     }
   },
   "fatal": null,
-  "durationMs": 5664
+  "durationMs": 5785
 }

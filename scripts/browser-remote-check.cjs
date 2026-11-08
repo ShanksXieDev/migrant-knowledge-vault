@@ -1,10 +1,22 @@
 /**
  * 远端索引热替换 + 站点功能回归 —— 真实浏览器实测。
  *
- * 前置：用编译期常量启动 dx serve，例如
- *   MKV_WEB_INDEX_URL=/remote-index.json dx serve --web --package mkv-web \
- *     --port 8081 --addr 127.0.0.1 --open false --watch false \
- *     --hot-reload false --interactive false
+ * 前置：**构建期**注入远端索引地址常量，然后托管产物。
+ *
+ *   # Git Bash（注意 MSYS_NO_PATHCONV，见下方警告）
+ *   MSYS_NO_PATHCONV=1 MKV_WEB_INDEX_URL=/remote-index.json \
+ *     dx build --release --web --package mkv-web
+ *   cd target/dx/mkv-web/release/web/public && python -m http.server 8081
+ *
+ *   # 或用完整 URL（不受 MSYS 影响）
+ *   MKV_WEB_INDEX_URL="http://127.0.0.1:8081/remote-index.json" \
+ *     dx build --release --web --package mkv-web
+ *
+ * ⚠️ **Git Bash 下必须加 `MSYS_NO_PATHCONV=1`**（或改用完整 URL / `./` 相对路径）：
+ *    MSYS 会把 `/remote-index.json` 转成 `C:/Program Files/.../PortableGit/remote-index.json`，
+ *    编译期常量被污染后浏览器会去请求一个 `file://` 本地路径，
+ *    热替换**永不生效**，且现象是「页面正常但状态栏永远没有『远端产物』」——
+ *    容易被误判成产品缺陷。用 `bash -c 'echo $MKV_WEB_INDEX_URL'` 可自查是否被转换。
  *
  * 本脚本用 Playwright 的路由拦截伪造远端响应，无需真的部署索引服务：
  *   1. 远端返回有效产物 → 应热替换（文档数与知识库名改变、状态栏标「远端产物」）

@@ -21,14 +21,17 @@ v0.1 工程脚手架：**Rust 核心库 + Dioxus 三端（Desktop / Web / Mobile
 | 反链 / 出链 | ✅  | 目标解析支持路径、文件名、主干、标题四级匹配                                         |
 | Git 版本  | ✅  | 提交、历史、差异、回滚；`.kbindex/` 自动忽略                                   |
 | 内置编辑器   | ✅  | 三个独立插件 crate（GridCraft / DeckCraft / WordCraft），契约 v1，始终读写原生文件 |
-| Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**本地与线上各 28/28 项真实浏览器验证通过** |
+| Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**本地与线上各 35/35 项真实浏览器验证通过** |
 | 文件监听    | ✅  | `notify` 增量索引 + 双链重算；实测索引 51ms、端到端 175ms（PRD 要求 1s 内）        |
-| 静态发布 / CI | ✅  | 6 文件纯静态站点；CI 门禁 + Pages 自动发布；wasm 经 wasm-opt 压到约 705KB（[线上站点](https://shanksxiedev.github.io/migrant-knowledge-vault/)） |
+| 静态发布 / CI | ✅  | 6 文件纯静态站点；CI 门禁 + Pages 自动发布；wasm 经 fat LTO + wasm-opt 压到约 677KB（[线上站点](https://shanksxiedev.github.io/migrant-knowledge-vault/)） |
 | UI 自动刷新 | ✅  | 索引修订号 + 250ms 轮询，文档列表 / 反链 / 检索结果自动重渲染 |
 | 外部唤起 F-08 | ✅  | 用系统默认应用打开原始文件（Windows `start` / macOS `open` / Linux `xdg-open`） |
 | 检索精确定位 | ✅  | 结果列表位置标签 + 预览区定位条与片段高亮；跳到段落 / 页 / 单元格行 / 节点（§13.4） |
-| 双链图谱 F-10 | ✅  | SVG 环形图谱：缩放、点选节点跳转；浏览器 B5–B7 验证（§13.5） |
-| 跨格式引用 F-06 | ✅  | `@文件#片段` 内联显示源内容（行 / 页 / 节点 / 段）、刷新与跳转；浏览器 C1–C3 验证（§13.6） |
+| 双链图谱 F-10 | ✅  | SVG 力导向图谱（按格式分簇）：缩放、点选节点跳转、格式图例；浏览器 B5–B8 验证（§13.5） |
+| 跨格式引用 F-06 | ✅  | `@文件#片段` 内联显示源内容（行 / 页 / 节点 / 段）、刷新与跳转；编辑器内「插入引用」入口；浏览器 C1–C3 验证（§13.6） |
+| 多维过滤 F-07 | ✅  | 格式 / 标签 / 修改时间窗 / 来源路径四维过滤，三端共用同一套判定；浏览器 D4–D6 验证（§13.7） |
+| 流程图节点 F-11 | ✅  | Visio / Drawio 抽取稳定节点 id，支撑节点级引用（§13.8） |
+| 正则检索 F-12 | ✅  | 零依赖自研回溯正则引擎（`regex` crate 闭包会拖垮 wasm 体积）；与 Python `re` 差分对拍真实差异 0；浏览器 D1–D3 验证（§13.9） |
 
 ---
 
@@ -412,14 +415,28 @@ MKV_URL=http://127.0.0.1:8080 node scripts/browser-check.cjs
 > 不会打断输入；清空条件后回车自动回到「全部文档」页签。
 > 该契约同时由 `mkv-ui` 的 SSR 测试与浏览器回归脚本守住。
 
-回归脚本覆盖 **28 项交互断言**：A1–A18 为既有核心链路（首屏 9 篇跨 6 格式、顶栏索引来源、
+回归脚本覆盖 **35 项交互断言**：A1–A18 为既有核心链路（首屏 9 篇跨 6 格式、顶栏索引来源、
 预览切换、Web 只读语义、双链反链、回车检索 / 二次回车 / 清空恢复、Tab 切换、无未捕获异常），
 B1–B4 为检索结果精确定位（位置标签、跳转高亮、命中正文、查看全文恢复），
-B5–B7 为 F-10 关系图谱（节点与边渲染、缩放、点选跳转），
-C1–C3 为 F-06 跨格式引用（内联源片段内容 / 刷新 / 点选跳到源文档并定位）。
-截图与 JSON 报告落在 `docs/browser-validation/`（本轮：`f06/`）。
+B5–B8 为 F-10 关系图谱（节点与边渲染、缩放、点选跳转、格式图例），
+C1–C3 为 F-06 跨格式引用（内联源片段内容 / 刷新 / 点选跳到源文档并定位），
+D1–D3 为 F-12 正则检索（模式页签切换 / 合法正则命中 / 非法正则显示「正则无效」而非零命中），
+D4–D6 为 F-07 多维过滤（面板可展开且候选非空 / 勾选后需回车重跑且结果只剩该格式 / 清空后恢复）。
+截图与 JSON 报告落在 `docs/browser-validation/`。
 
-**已验证结果（2026-11-08 下午）**：本地静态站点与线上 Pages 站点**各 28/28 全通过**，0 console error、0 未捕获异常；线上报告 `docs/browser-validation/pages-live-f06/`。
+远程回归脚本 `scripts/browser-remote-check.cjs` 覆盖 **15 项**：R1–R5 为远端热替换
+（有效产物 / HTTP 500 回落 / 空索引回落 / 无未捕获异常），G1–G4 为图谱 V2，
+D1–D6 为正则与过滤。
+
+**已验证结果（2026-11-09）**：本地静态站点 **35/35 全通过**，0 console error、0 未捕获异常；
+远端脚本 **15/15 全通过**（R1–R5 热替换与回落 + G1–G4 图谱 V2 + D1–D6 正则与过滤，
+5.79s，报告 `docs/browser-validation/remote-report.json`）。
+
+> ⚠️ 远端脚本的前置条件是**构建期注入了远端地址常量**的产物（`MKV_WEB_INDEX_URL`），
+> 且必须用 `MSYS_NO_PATHCONV=1` 规避 Git Bash 的路径转换（见下方 §12 处的警告）。
+> 线上站点的 `deploy-info.json` 里 `remote_index_url = null`（构建时未注入常量），
+> Web 端运行时**不会发起**远端请求，因此远端脚本**不适用于线上站点** ——
+> 线上回归请用 `scripts/browser-check.cjs`（35 项，`MKV_URL` 指向线上 URL）。
 
 ---
 
@@ -509,19 +526,32 @@ MKV_WEB_INDEX_URL="https://your.site/mkv-index.json" scripts/publish-web.sh
 该链路已用 Playwright 拦截请求做过**真实浏览器实测（5/5 全通过）**：有效产物热替换、
 HTTP 500 回落、空索引回落、顶栏知识库名同步。报告：`docs/browser-validation/remote-report.json`。
 
-> ⚠️ Git Bash 下不要写 `MKV_WEB_INDEX_URL=/remote-index.json` —— MSYS 会把它转成
+> ⚠️ **Git Bash 下不要写 `MKV_WEB_INDEX_URL=/remote-index.json`** —— MSYS 会把它转成
 > `C:/Program Files/.../PortableGit/remote-index.json` 污染编译期常量。
-> 用完整 URL，或 `./mkv-index.json` 这类相对路径。
+> 三种正确写法（任选其一）：
+> ```bash
+> MSYS_NO_PATHCONV=1 MKV_WEB_INDEX_URL=/remote-index.json scripts/publish-web.sh   # ① 关闭路径转换
+> MKV_WEB_INDEX_URL="https://your.site/mkv-index.json" scripts/publish-web.sh     # ② 用完整 URL
+> MKV_WEB_INDEX_URL=./mkv-index.json scripts/publish-web.sh                        # ③ 用 ./ 相对路径
+> ```
+> 自查：`bash -c 'echo $MKV_WEB_INDEX_URL'` —— 若输出里出现 `C:/Program Files/...` 即已被污染。
+>
+> **这个坑的表现极具误导性**：常量被污染后浏览器会去请求一个 `file://` 本地路径，
+> 页面**一切正常**（内嵌产物照常渲染），但状态栏永远不会出现「远端产物」——
+> 看起来像产品缺陷，实际是环境变量写法问题。2026-11-09 曾因此误判过一次，
+> 最终靠「浏览器原生 `new Request('/remote-index.json').url` 解析正确、
+> 而 Rust 侧请求却指向 `file://`」这一对照实验才定位到真因。
 
 ### 12.4 CI（`.github/workflows/web.yml`）
 
 | 门禁 | 内容 |
 |---|---|
-| 测试 | `cargo test --workspace`（157 项全绿） |
+| 测试 | `cargo test --workspace`（270 项全绿） |
+| 正则对拍 | 4000 例与 Python `re` 差分对拍，**真实差异必须为 0**（§13.9） |
 | 移动端 | `cargo build -p mkv-mobile` 编译门禁；**真机验证仍需人工** |
 | 依赖 | wasm32 依赖树零 `tantivy / jieba / zstd / rusqlite / git2 / notify / cc` |
 | 构建 | `scripts/publish-web.sh` + 产物清单校验 + **wasm < 800KB 体积门禁** |
-| 浏览器 | `dist/` 起静态服务 → Playwright Chromium 跑 28 项交互回归 |
+| 浏览器 | `dist/` 起静态服务 → Playwright Chromium 跑 35 项交互回归 |
 | 发布 | main 分支自动 `actions/deploy-pages`（run #7–#12 连续实测 success）；PR 只验证不发布 |
 
 CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—— Windows MSVC 的
@@ -655,24 +685,71 @@ wasm-opt `version 127 (version_127)`），`wasm_opt_issue = None`，
 （报告与截图：`docs/browser-validation/pages-live-run25/`）。
 即修复后连续两次（#23 / #25）全绿，CI 兜底通道与工作流稳定性得到实证。
 
-### 12.7 wasm 体积优化（wasm-opt）
+### 12.7 wasm 体积优化（fat LTO + wasm-opt）
 
-`dx build --release` 默认 `--debug-symbols=true`，产物里带大量 DWARF 调试段；
-而 `[profile.release] strip = false` 不能改（`strip = true` 会剥掉 wasm-bindgen 自定义段，见 §12.5）。
-因此优化放在**发布脚本**里，作用于 wasm-bindgen 输出之后：`wasm-opt -Oz --strip-debug`。
+wasm 体积门禁是 **800,000 B** 的硬约束。本轮新增五项功能后一度逼近门禁
+（891,480 B，超 91KB），靠猜是低效的，因此先建立了两把「尺子」再动手：
+
+- `scripts/wasm-size-by-name.py`：解析 wasm 的 `name` 自定义段拿到
+  「函数下标 → 函数名」，再与 `code` 段的函数体大小对齐，按模块路径归因。
+  （旧的 DWARF 归因脚本在本项目的 rustc 输出上 99.9% 落到 unknown，已移除。）
+- **消融测量法**：改一项配置 → 重新构建 → 用同一套参数跑 `wasm-opt` → 比对字节数。
+
+归因结论（cargo wasm，未优化 3.31 MB）：
+
+| 桶 | 字节 | 说明 |
+|---|--:|---|
+| `wasm_bindgen` | 485,218 | 主要是 `__wbindgen_describe_*`；**wasm-bindgen CLI 会剥离 `__wasm_bindgen_unstable` 自定义段**，最终产物里没有它 |
+| `mkv_ui` | 213,926 | Dioxus 组件代码 |
+| `mkv_core::regex` | 12,269 | 自研正则引擎只有 12KB，**不是**体积元凶 |
+| `mkv_core::query` | 21,047 | 其中 `QueryFilter::clone` 单函数 10,131 B（派生 Clone 展开异常，已记录待优化） |
+
+于是真正要动的不是业务代码，而是**编译配置**：
+
+| 配置 | wasm（wasm-opt 后） | 相对基线 |
+|---|--:|---|
+| `opt-level=3` + `lto="thin"`（原配置） | 891,480 B | 超门禁 91KB |
+| \+ 自有 crate `opt-level="z"` | 822,067 B | 超门禁 22KB |
+| \+ `lto="fat"` | **693,304 B** | **余量 107KB（13.3%）** |
+
+**关键结论：fat LTO 的收益（-129KB）远大于单改 opt-level（-69KB）**——
+跨 crate 的重复代码与未达代码只有 LTO 能消除。
+
+影响面控制（`Cargo.toml`）：
+
+```toml
+[profile.release]
+lto = "fat"            # 全局：跨 crate 内联与去重
+opt-level = 3          # 依赖 crate 保持默认
+
+[profile.release.package.mkv-core]   # 仅自有 crate 做体积优化
+opt-level = "z"
+[profile.release.package.mkv-ui]
+opt-level = "z"
+[profile.release.package.mkv-web]
+opt-level = "z"
+```
+
+- 依赖 crate（tantivy / sqlite / dioxus）仍是 `opt-level=3`，**不拖慢检索热路径**。
+- 实测正则引擎吞吐下降 6%~22%（多数 8%~10%）：线性类 19.7→17.3、词类 7.7→7.0、
+  字符类 10.5→9.9、惰性量词 8.6→7.9、嵌套重复 11.7→9.1 M字符/s。
+  绝对速度仍远超交互需求（40KB 文档单次扫描约 4ms）。
+- 桌面端同样受益（跨 crate 内联更多），代价是编译时间 17s → 45s。
+
+`wasm-opt` 侧的改动：`scripts/publish-web.sh` 的参数链加入 `--converge`
+（-483 B），并把激进参数排在前面、基础组 `-Oz --strip-debug` 兜底，
+兼容不认识该参数的旧版 binaryen。
 
 | 项 | 值 |
 |---|---|
-| 优化前 | 1,245,191 bytes（含新增位置片段与图谱代码） |
-| 优化后 | **667,161 bytes（约 651 KB）** |
-| 压缩率 | **-46.4%** |
-| 插件化后（run #14，CI/Linux） | 1,274,581 bytes → **724,483 bytes（约 708 KB）**，仍低于 800KB 门禁 |
-| 兜底通道上线后（run #23，CI/Linux） | 1,274,581 bytes → **724,441 bytes（约 708 KB）**，`-Oz --strip-debug`，wasm-opt `version 127` |
+| 历史基线（插件化后，run #14 / #23） | 1,274,581 B → 724,441 B |
+| 本轮五项功能落地后（修复前） | 891,480 B（超门禁） |
+| 本轮体积治理后（本地） | **693,304 B**（余量 107KB） |
 | 工具来源 | 本地优先 dx 自动下载的 `~/.dx/tools/binaryen-*/bin/wasm-opt`（版本与 wasm-bindgen 产物匹配），PATH 上的 binaryen 仅作兜底；CI 侧改为**预装进 dx 缓存目录**（含 apt 兜底，见 §12.8），避免构建期再联网 |
 | 失败策略 | 找不到工具 / 未产出更小产物 → 只警告并保留原始 wasm，绝不阻断本地发布；CI 的 `wasm < 800KB` 门禁会据此判定失败 |
 
-`deploy-info.json` 新增 `wasm_optimization` 记录前后体积与参数；CI 断言 wasm < 800 KB
-（未优化约 1.2 MB），防止优化悄悄失效。CI 侧 ubuntu runner 额外 `apt install binaryen` 兜底，
+`deploy-info.json` 记录 `wasm_optimization`（前后体积与参数）。CI 断言 wasm < 800 KB，
+防止优化悄悄失效。CI 侧 ubuntu runner 额外 `apt install binaryen` 兜底，
 但脚本优先用 dx 自带版本，避免 runner 预装的较老 binaryen 解析不了新版 wasm 特性；
 优化未采用时会把 wasm-opt 的 stderr 打进日志便于排障。
 
@@ -685,6 +762,11 @@ wasm-opt `version 127 (version_127)`），`wasm_opt_issue = None`，
 > **插件化之后**：编辑器实现移出 core，但新增契约层与启动升级横幅，
 > 本地 wasm 1,338,199B → **724,696B（-45.8%）**，仍低于 800KB 门禁（余量约 75KB）；
 > CI/Linux（run #23）1,274,581B → **724,441B**，同样过门禁。
+>
+> **五项进阶功能之后**：新增正则引擎、查询过滤、图谱布局、流程图节点、
+> 引用插入入口，wasm 一度涨到 891,480B（超门禁 91KB）；
+> 经体积归因 + 消融测量，改用 **fat LTO + 自有 crate `opt-level="z"`**，
+> 降到 **693,304B**，比插件化后的历史基线（724,441B）**还小 31KB**。
 
 
 ### 12.8 CI 外部依赖的三条兜底通道
@@ -776,11 +858,19 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 
 ### 13.5 双链关系图谱 F-10
 
-- `locate::build_graph_snapshot()`：确定性环形布局，高度数节点靠中心；
-  悬空目标 / 自环 / 重复边剔除，节点按路径排序保证产物可复现。
-- `KnowledgeService::graph_snapshot()` 默认空图；Web 用索引 links、Desktop 用 Vault 出链。
-- UI 侧栏新增「关系图谱」页签；主区 SVG 渲染节点与有向边，支持放大 / 缩小 / 重置，
-  **点选节点跳回文档预览**。浏览器 B5–B7 覆盖 9 节点 / 12 边、缩放 transform 变化与点选跳转。
+- `core/graph_layout.rs`：Fruchterman–Reingold 变体的**确定性**力导向布局
+  （固定 seed → 同一输入产出逐字节相同的坐标）。按文档格式分簇，度数作权重，
+  枢纽节点更靠中心。
+- `locate::build_graph_snapshot_with_positions()`：悬空目标 / 自环 / 重复边剔除，
+  节点按路径排序保证产物可复现。
+- **坐标在构建期算好**：布局引擎只在 `native` 特性下参与编译，Web 端坐标随
+  预构建索引产物发布（`PrebuiltIndex.graph_positions`，`#[serde(default)]` 保 v1 兼容）；
+  运行期不再做 240 轮浮点迭代。旧产物 / 远端热替换拿到旧 schema 时回退到
+  **确定性环形布局**，保证图谱面板不白屏、不 panic。
+- UI 侧栏新增「关系图谱」页签；主区 SVG 渲染节点与有向边，支持放大 / 缩小 / 重置、
+  **点选节点跳回文档预览**、**格式图例**、**视口裁剪**（大库只渲染视口内节点，
+  状态栏显示「已渲染 N / 共 M 个节点」）。
+- 浏览器 B5–B8 覆盖 9 节点 / 12 边、缩放 transform 变化、点选跳转与图例存在。
 
 
 ### 13.6 跨格式引用 F-06
@@ -805,6 +895,87 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 > 边界：Web 只读端显示构建期快照，「源更新后刷新」在 Desktop 生效；
 > 定位到的是**抽取后的文本片段**，不是原生 Office 应用内的单元格 / 幻灯片对象。
 
+#### 13.6.1 进阶①：编辑器内「插入引用」入口
+
+- **core**：新增 `types::ReferenceTarget { path, title, candidates }`，
+  `candidates` 是 `(1-based 序号, 标签文本, 类型)` 三元组（`refs::selector_candidates`）。
+  `KnowledgeService::reference_targets()` 默认空；`NativeService` 覆写为
+  「遍历文档 → 判定格式 → 读原文 → `locate::segment_text` → 取候选」。
+- **UI**：`InsertTarget` 枚举（表格 `(sheet,row,col)` / 演示 `(slide,shape)` /
+  文档 `paragraph`）由三个面板通过 `Signal<Option<InsertTarget>>` 共享；
+  单元格 / 形状 / 段落旁各有一个「引用」小按钮设置插入位置，
+  工具栏「插入引用」按钮展开面板（目标文档下拉 + 片段候选下拉 + 插入按钮）。
+- **动作复用**：token 由 `refs::format_reference_token` 生成，**追加**到目标文本末尾，
+  然后复用既有的 `PluginAction::SetCell / SetShapeText / SetParagraph` 提交——
+  **刻意不给 `PluginAction` 加新变体**，插件契约 v1 保持冻结（见 §9.5 的补充约束 30）。
+- **性能**：`reference_targets()` 要读全部文档原文，因此面板**条件挂载**，
+  只在用户点开时才求值，不进渲染热路径。
+- 验证：`packages/ui/tests/ref_insert_ui.rs` 11 项 SSR（含 mock service 与 mock 插件，
+  动作过**真实 `plugin::apply_action`** 后读回视图确认文本已追加）。
+
+> 已知限制：追加不带分隔符（`PN-1024@03-台账/模具台账.xlsx#2`）；
+> 候选序号是**去重后**列表位置，目标文档若含重复标签，`#N` 可能落到相邻片段。
+
+
+### 13.7 多维过滤 F-07
+
+- **core**：`core/query.rs` 定义 `SearchQuery`（文本 + 模式 + 过滤器 + limit）与
+  `QueryFilter`（格式 / 标签 / 修改时间窗 / 来源路径）。
+  `QueryFilter::matches()` 是**三端共用**的判定函数：过滤发生在**检索结果**上，
+  而不是索引查询里——这样 Web 预构建索引与 Native 索引的过滤语义完全一致，
+  无需在两条链路上各实现一遍。
+- **服务层**：`KnowledgeService::search_query()` 默认实现 = 「旧 `search` + 过滤」，
+  因此**既有后端无需修改**；`validate_query()` 区分「正则写错」与「正则合法但没命中」，
+  否则 UI 只能给用户一句含糊提示。
+- **标签来源**：`core/tags.rs` 从 front-matter、目录名（只取最后一级）、文档格式
+  三处抽取标签；`tags_of()` / `all_tags()` 默认空，`NativeService` 与
+  `PrebuiltService` 各自覆写（后端不支持标签过滤时整块不渲染，不显示空标签区）。
+- **UI**：可折叠的 `<details class="mkv-filter-panel">`，四个维度分组 + 「清空过滤」。
+  过滤条件变更**不自动检索**（每勾一下就全库重扫代价太高），只更新条件并提示按回车；
+  「清空过滤」点击后主动重跑一次。
+- 验证：浏览器 D4–D6（面板可展开且候选非空 / 勾选后需回车且结果只剩该格式 /
+  清空后恢复）；实测格式候选 6 个，勾选 Markdown 后 6 条 → 4 条，
+  且每条结果的格式标识都等于所选格式。
+
+
+### 13.8 流程图节点 F-11
+
+- `core/diagram.rs`：从 Visio 的 shape `ID` / Drawio 的 `mxCell@id` 抽取**稳定节点 id**，
+  同时保留显示文本、所属层级与页码。
+- 为什么需要独立模块：纯文本抽取会把这些信息全丢掉——只剩一串标签文本，
+  「节点 3」既可能是 id 也可能是序号，引用方无从判断。节点清单作为**可选补充信息**
+  供引用解析使用，`parse.rs` 的纯文本抽取保持不变（不影响既有索引与回归）。
+- 只依赖 `quick-xml` 与 `zip`，**无原生依赖**，因此 wasm32 可编译
+  （Web 端构建期抽取节点清单打进索引产物）。
+- `PrebuiltDoc.nodes` 用 `#[serde(default)]`：旧产物没有该字段时为空数组，
+  节点级引用退回到「页 / 段」级匹配，语义不丢。
+
+
+### 13.9 正则检索 F-12
+
+- **为什么自研**：`regex` crate 会带来 `regex-syntax` + `regex-automata` +
+  `aho-corasick` 的依赖闭包，对 wasm 体积的贡献是数十 KB 级，
+  而正则检索只是**一个可选的检索模式**——不值得为此牺牲体积门禁。
+  `core/regex.rs` 是零依赖（仅 `std`）、无 `unsafe` 的回溯式引擎：
+  递归下降解析器 → AST → 扁平指令表 → 迭代式回溯 VM（回溯栈在堆上，
+  长文本不会爆调用栈），带**回溯步数上限**杜绝灾难性回溯卡死界面。
+- **语义**：左优先 + 贪婪优先，与 Python `re` 对齐；`$` 采用**严格末尾**语义
+  （与 Rust `regex` crate 一致），因此与 Python `re` 的差异是**有意偏差**。
+- **循环状态用回滚日志整体还原**：这是本轮修掉的实质缺陷。
+  早期实现只在回溯时恢复「当前循环」的轮数，嵌套循环里内层重放上一轮循环体时
+  会把**外层**的轮数多算一次，`{2,}` 的最小次数被虚假满足 → 匹配结果比参考引擎短
+  （差分对拍 9 处真实差异）。改成「任何循环状态修改先记旧值、回溯弹帧时逆序还原」
+  之后，真实差异 **9 → 0**。这与 CPython `sre` 把重复计数压进回溯栈的做法等价。
+- **差分对拍固化为 CI 门禁**：`packages/core/examples/regex_fuzz_{ref.py,run.rs,cmp.py}`
+  做 4000 例确定性对拍（seed 固定），**真实差异必须为 0**。
+  为什么单列一道门禁：这个引擎是「手写回溯 VM + 计数式循环状态」，
+  嵌套重复的最小次数约束曾绕过 9 处真实差异，而 270 项单测**全部绿**——
+  单测覆盖不到「引擎与参考引擎语义不一致」这一类缺陷。
+- **UI**：检索栏新增「普通词条 / 正则」两个模式页签；正则写错时显示
+  `正则无效：…` 而**不是**「0 条命中」；命中结果带正则模式的高亮。
+- 验证：浏览器 D1–D3（模式切换 / 合法正则命中 / 非法正则报错并可切回）；
+  CI 门禁「正则引擎差分对拍（与 Python re 对齐）」。
+
 ---
 
 ## 14. 相关文档
@@ -812,6 +983,7 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 - `../本地个人知识库-需求描述.md` —— 需求主文档（v1.2）
 - `../技术方案设计.md` —— 技术方案与已确认决策清单
 - `../PRD.md` —— 产品需求文档（七章节）
+- `docs/upstream-mcp-adapter.md` —— 上游编辑器 MCP 适配器（进程外后端协议与后端选择基线）
 
 ---
 
@@ -819,13 +991,27 @@ PRD §7.1 唯一未勾选项由此补齐；F-06「引用处动态显示内容」
 
 1. **移动端真机验证**：CI 只能保证可编译
 2. **Desktop GUI 人工验收**：自动刷新与外部唤起的实际窗口行为
-3. **F-06 进阶**：编辑器内插入引用的入口、源变更差异高亮、原生 Office 应用内定位
-4. **F-10 图谱进阶**：力导向聚类、按标签着色、大库虚拟渲染
-5. **Node.js 20 警告**：CI 中 `actions/*` 的 Node 20 deprecation 提示，待官方迁移后评估升级
-6. **插件升级链路真机验收**：Desktop GUI 确认横幅、重建后重启生效的实际窗口行为
-7. **CI 兜底通道的常态化验证**：crates.io / apt 兜底目前只在 run #23 真实触发过一次
+3. **F-06 进阶②**：源变更差异高亮（`refs::diff_lines` 已有核心实现，UI 未接）
+4. **F-06 进阶③**：原生 Office 应用内定位（`core/office_locator.rs` 已有推导实现，
+   Desktop 端执行侧未接）
+5. **F-10 图谱进阶**：大库虚拟渲染已具备视口裁剪，按标签着色仍未做
+6. **wasm 体积**：门禁余量已回到 13.3%，但 `QueryFilter::clone` 单函数 10,131 B
+   属异常膨胀，值得单独优化
+7. **Node.js 20 警告**：CI 中 `actions/*` 的 Node 20 deprecation 提示，待官方迁移后评估升级
+8. **插件升级链路真机验收**：Desktop GUI 确认横幅、重建后重启生效的实际窗口行为
+9. **CI 兜底通道的常态化验证**：crates.io / apt 兜底目前只在 run #23 真实触发过一次
    （wasm-bindgen），其余分支只经过本地仿真。可考虑做成一条可手动触发的 workflow，
    强制走兜底路径，避免「平时不跑、要用时已经腐化」
+
+> 2026-11-09：**五项进阶功能已全部落地并闭环**，架构随之收敛：
+> F-07 多维过滤、F-10 双链图谱（力导向 + 构建期坐标）、F-11 流程图节点、
+> F-12 正则检索（自研零依赖引擎）、F-06 进阶① 编辑器内插入引用。
+> **270 项测试全绿**；**浏览器回归本地 35/35、远端 15/15**；
+> **正则差分对拍真实差异 0**（并固化为 CI 门禁）；
+> **wasm 891,480B → 693,304B**（fat LTO + 自有 crate `opt-level="z"`），
+> 门禁余量从「超 91KB」回到「富余 107KB」，比插件化后的历史基线还小 31KB（§12.7）。
+> 五项功能里唯一需要动**编译配置**而非业务代码的是 wasm 体积——
+> 根因是 fat LTO 缺失，不是功能代码膨胀（自研正则引擎只占 12KB）。
 
 > 2026-11-08：技术债务已清理，P0 文件监听、P1 静态发布（方案 A）+ CI 门禁、
 > Desktop UI 自动刷新与 F-08 外部唤起均已落地。代码已推送到 GitHub，
