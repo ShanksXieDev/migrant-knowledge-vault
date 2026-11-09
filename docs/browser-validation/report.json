@@ -59,7 +59,7 @@
     {
       "name": "A10 检索后自动切结果页签",
       "ok": true,
-      "detail": "已切到「检索结果」"
+      "detail": "当前页签=\"检索结果\""
     },
     {
       "name": "A11 状态栏命中反馈",
@@ -200,7 +200,7 @@
   "pageErrors": [],
   "consoleErrors": [],
   "fatal": null,
-  "durationMs": 4311,
+  "durationMs": 4288,
   "screenshots": [
     "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\01-first-paint.png",
     "C:\\Users\\xiexi\\WorkBuddy\\2026-11-07-09-07-33\\Migrant-Knowledge-Vault\\docs\\browser-validation\\02-document-backlinks.png",

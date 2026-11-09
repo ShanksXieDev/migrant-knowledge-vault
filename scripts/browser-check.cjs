@@ -4,13 +4,14 @@
  * 驱动真实 Microsoft Edge（headless）打开 dx serve 的页面，执行点击 / 输入 / 页签切换，
  * 验证「构建期内嵌的预构建只读索引」在真实浏览器里可检索、可预览、可看双链。
  *
- * 共 35 项断言，分四组：
+ * 共 37 项断言，分四组：
  * - A1–A18：既有核心链路（首屏 / 预览 / 反链 / 中文检索 / 页签 / 异常检查）。
  * - B1–B4：检索结果精确定位（PRD §7.1）。
  * - B5–B8：F-10 双链关系图谱 **V2**（渲染 / 缩放 / 点选跳转 / 格式图例）。
  *   V2 的类名是 `mkv-graph-v2-*`（`mkv-graph-v2-svg` / `-node` / `-edge` / `-tools`），
  *   旧的 `mkv-graph-svg` / `mkv-graph-tools` 已随产品下线，断言必须用 v2 选择器。
- * - C1–C3：F-06 跨格式引用（内联源片段 / 刷新 / 点选跳转）。
+ * - C1–C5：F-06 跨格式引用（内联源片段 / 刷新 / 点选跳转 /
+ *   源未变不显示差异块 / Web 端不显示 Office 按钮）。
  * - D1–D6：F-12 正则检索（模式页签 / 正则命中 / 非法正则报错）与
  *   F-07 多维过滤（格式候选 / 过滤需回车重跑 / 清空过滤）。
  *
@@ -233,18 +234,39 @@ async function shot(page, name) {
     const input = page.locator('.mkv-search-input');
     await input.fill(keyword);
     await input.press('Enter');
-    await page.waitForFunction(
-      () => {
-        const t = document.querySelector('.mkv-tab-active');
-        return t && t.textContent.includes('检索结果');
-      },
-      null,
-      { timeout: 10000 }
-    );
+    // 等「检索结果」页签成为激活页签。
+    //
+    // 这里**不**把超时当致命错误直接抛出：超时恰恰说明「页签没自动切换」，
+    // 而这正是 A10 要断言的内容。若在此处抛异常，整份报告会在 A10 之前中止，
+    // 读者只能看到一条栈而不是一条可读的 FAIL。
+    const switchedToResults = await page
+      .waitForFunction(
+        () => {
+          const t = document.querySelector('.mkv-tab-active');
+          return !!(t && t.textContent.includes('检索结果'));
+        },
+        null,
+        { timeout: 10000 }
+      )
+      .then(() => true)
+      .catch(() => false);
     const hits = await page.locator('.mkv-result').count();
     const searchStatus = (await page.locator('.mkv-topbar-status').innerText()).trim();
     check('A9 回车触发中文检索并命中', hits > 0, `"${keyword}" → ${hits} 条`);
-    check('A10 检索后自动切结果页签', true, '已切到「检索结果」');
+    // A10 原先是 `check('A10 ...', true, ...)` —— **恒真断言**：
+    // 无论实际状态如何都判 PASS，属于典型的「假通过」。
+    // 现改为同点现采激活页签的真实文本再断言，
+    // 于是「检索后没有自动切到检索结果页签」会表现为一条可读的 FAIL。
+    const activeTabLocator = page.locator('.mkv-tab-active');
+    const activeTabCount = await activeTabLocator.count();
+    const activeTabText = activeTabCount
+      ? (await activeTabLocator.first().innerText()).trim()
+      : '(无激活页签)';
+    check(
+      'A10 检索后自动切结果页签',
+      switchedToResults && activeTabText.includes('检索结果'),
+      `当前页签="${activeTabText}"${switchedToResults ? '' : '（等待激活页签超时）'}`
+    );
     check('A11 状态栏命中反馈', searchStatus.includes('命中'), searchStatus);
     screenshots.push(await shot(page, '03-search-results.png'));
 

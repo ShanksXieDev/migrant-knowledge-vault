@@ -21,7 +21,7 @@ v0.1 工程脚手架：**Rust 核心库 + Dioxus 三端（Desktop / Web / Mobile
 | 反链 / 出链 | ✅  | 目标解析支持路径、文件名、主干、标题四级匹配                                         |
 | Git 版本  | ✅  | 提交、历史、差异、回滚；`.kbindex/` 自动忽略                                   |
 | 内置编辑器   | ✅  | 三个独立插件 crate（GridCraft / DeckCraft / WordCraft），契约 v1，始终读写原生文件 |
-| Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**本地与线上各 35/35 项真实浏览器验证通过** |
+| Web 端索引 | ✅  | 预构建只读索引：构建期内嵌二进制，运行时零网络加载；**本地 37/37 项真实浏览器验证通过** |
 | 文件监听    | ✅  | `notify` 增量索引 + 双链重算；实测索引 51ms、端到端 175ms（PRD 要求 1s 内）        |
 | 静态发布 / CI | ✅  | 6 文件纯静态站点；CI 门禁 + Pages 自动发布；wasm 经 fat LTO + wasm-opt 压到约 677KB（[线上站点](https://shanksxiedev.github.io/migrant-knowledge-vault/)） |
 | UI 自动刷新 | ✅  | 索引修订号 + 250ms 轮询，文档列表 / 反链 / 检索结果自动重渲染 |
@@ -500,20 +500,26 @@ MKV_URL=http://127.0.0.1:8080 node scripts/browser-check.cjs
 > 不会打断输入；清空条件后回车自动回到「全部文档」页签。
 > 该契约同时由 `mkv-ui` 的 SSR 测试与浏览器回归脚本守住。
 
-回归脚本覆盖 **35 项交互断言**：A1–A18 为既有核心链路（首屏 9 篇跨 6 格式、顶栏索引来源、
+回归脚本覆盖 **37 项交互断言**：A1–A18 为既有核心链路（首屏 9 篇跨 6 格式、顶栏索引来源、
 预览切换、Web 只读语义、双链反链、回车检索 / 二次回车 / 清空恢复、Tab 切换、无未捕获异常），
 B1–B4 为检索结果精确定位（位置标签、跳转高亮、命中正文、查看全文恢复），
 B5–B8 为 F-10 关系图谱（节点与边渲染、缩放、点选跳转、格式图例），
-C1–C3 为 F-06 跨格式引用（内联源片段内容 / 刷新 / 点选跳到源文档并定位），
+C1–C5 为 F-06 跨格式引用（内联源片段内容 / 刷新 / 点选跳到源文档并定位 /
+源未变更时不显示差异块 / Web 端不显示「在 Office 中打开」按钮），
 D1–D3 为 F-12 正则检索（模式页签切换 / 合法正则命中 / 非法正则显示「正则无效」而非零命中），
 D4–D6 为 F-07 多维过滤（面板可展开且候选非空 / 勾选后需回车重跑且结果只剩该格式 / 清空后恢复）。
 截图与 JSON 报告落在 `docs/browser-validation/`。
+
+> **断言必须真的断言**：A10 曾写成 `check('A10 ...', true, ...)` —— **恒真断言**，
+> 无论实际状态如何都判 PASS。现改为同点现采激活页签的真实文本再断言，
+> 且把「等待激活页签」的超时**降级为一条 FAIL**而不是直接抛异常中止整份报告。
+> 恒真断言比没有断言更危险：它会让人误以为该行为已被守住。
 
 远程回归脚本 `scripts/browser-remote-check.cjs` 覆盖 **15 项**：R1–R5 为远端热替换
 （有效产物 / HTTP 500 回落 / 空索引回落 / 无未捕获异常），G1–G4 为图谱 V2，
 D1–D6 为正则与过滤。
 
-**已验证结果（2026-11-09）**：本地静态站点 **35/35 全通过**，0 console error、0 未捕获异常；
+**已验证结果（2026-11-09）**：本地静态站点 **37/37 全通过**，0 console error、0 未捕获异常；
 远端脚本 **15/15 全通过**（R1–R5 热替换与回落 + G1–G4 图谱 V2 + D1–D6 正则与过滤，
 5.79s，报告 `docs/browser-validation/remote-report.json`）。
 
@@ -521,7 +527,7 @@ D1–D6 为正则与过滤。
 > 且必须用 `MSYS_NO_PATHCONV=1` 规避 Git Bash 的路径转换（见下方 §12 处的警告）。
 > 线上站点的 `deploy-info.json` 里 `remote_index_url = null`（构建时未注入常量），
 > Web 端运行时**不会发起**远端请求，因此远端脚本**不适用于线上站点** ——
-> 线上回归请用 `scripts/browser-check.cjs`（35 项，`MKV_URL` 指向线上 URL）。
+> 线上回归请用 `scripts/browser-check.cjs`（37 项，`MKV_URL` 指向线上 URL）。
 
 ---
 
@@ -646,7 +652,7 @@ HTTP 500 回落、空索引回落、顶栏知识库名同步。报告：`docs/br
 | 移动端 | `cargo build -p mkv-mobile` 编译门禁；**真机验证仍需人工** |
 | 依赖 | wasm32 依赖树零 `tantivy / jieba / zstd / rusqlite / git2 / notify / cc` |
 | 构建 | `scripts/publish-web.sh` + 产物清单校验 + **wasm < 800KB 体积门禁** |
-| 浏览器 | `dist/` 起静态服务 → Playwright Chromium 跑 35 项交互回归 |
+| 浏览器 | `dist/` 起静态服务 → Playwright Chromium 跑 37 项交互回归 |
 | 发布 | main 分支自动 `actions/deploy-pages`（run #7–#12 连续实测 success）；PR 只验证不发布 |
 
 CI 固定在 **Linux runner + 官方预编译 dx 0.7.10**（sha256 校验）—— Windows MSVC 的
