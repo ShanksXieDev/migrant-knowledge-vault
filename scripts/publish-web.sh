@@ -134,7 +134,7 @@ echo "[mkv] 3/4 组装静态站点（路径重写 + 剔除残留资源）…"
 echo "[mkv] 4/4 附带可替换的索引产物…"
 
 MKV_WASM_OPT="$WASM_OPT" MKV_WASM_OPT_VERSION="$WASM_OPT_VERSION" \
-    "$PY" - "$PUBLIC_DIR" "$DIST" "$INDEX_OUT" "$VAULT" "${MKV_WEB_INDEX_URL:-}" <<'PYEOF'
+    "$PY" - "$PUBLIC_DIR" "$DIST" "$INDEX_OUT" "$VAULT" "${MKV_WEB_INDEX_URL:-}" "$REPO_ROOT" <<'PYEOF'
 import datetime
 import io
 import json
@@ -144,7 +144,7 @@ import shutil
 import subprocess
 import sys
 
-public, dist, index_out, vault, remote = sys.argv[1:6]
+public, dist, index_out, vault, remote, repo_root = sys.argv[1:7]
 
 # dx 默认 --debug-symbols=true，release wasm 里带大量 DWARF 调试段（约占总大小一半）。
 # wasm-opt 作用于 wasm-bindgen 输出之后，剥离调试段不会碰 rustc 的
@@ -264,6 +264,27 @@ files = {
     'mkv-index.json': os.path.getsize(os.path.join(dist, 'mkv-index.json')),
     **copied,
 }
+
+# --- wasm 段构成归因（代码段 vs 数据段）---------------------------------
+# 只有一个总量阈值时，体积失败只能回答「过没过」，回答不了「**为什么**」。
+# 2026-11-09 的专家团评审实测发现：diff 引擎与 `office_locator` 已被完全 DCE，
+# 真正随知识库线性增长的是**内嵌的索引产物**（`include_str!` 编译进 wasm），
+# 它落在 **data 段**里——与业务代码的增长来源完全不同。
+# 因此把段构成记进 deploy-info.json，让 CI 门禁能区分
+# 「业务代码写多了」与「知识库变大了」两种完全不同的失败。
+wasm_sections = None
+try:
+    import importlib.util
+    tool_path = os.path.join(repo_root, 'scripts', 'wasm-sections.py')
+    spec = importlib.util.spec_from_file_location('wasm_sections', tool_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    wasm_path = next(
+        os.path.join(dist, k) for k in copied if k.endswith('.wasm'))
+    wasm_sections = module.analyze(wasm_path)
+except Exception as exc:  # 归因失败**不阻断发布**——它是诊断信息，不是产物
+    print('      [warn] wasm 段构成归因失败（不影响发布）：%s' % exc)
+
 info = {
     'generated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
     'vault': vault,
@@ -272,6 +293,7 @@ info = {
     'wasm_optimization': wasm_optimization or None,
     'wasm_opt_issue': wasm_opt_issue,
     'wasm_opt_version': os.environ.get('MKV_WASM_OPT_VERSION') or None,
+    'wasm_sections': wasm_sections,
     'files': files,
 }
 io.open(os.path.join(dist, 'deploy-info.json'), 'w', encoding='utf-8').write(
@@ -284,6 +306,14 @@ for k in sorted(files):
 for k, rec in wasm_optimization.items():
     pct = 100.0 * (1 - rec['after'] / rec['before'])
     print(f'      wasm 优化 {k}: {rec["before"]} → {rec["after"]} bytes (-{pct:.1f}%)')
+if wasm_sections:
+    total = wasm_sections['file_bytes'] or 1
+    print('      wasm 段构成（分项归因）：')
+    print(f'        代码段  {wasm_sections["code_bytes"]} bytes'
+          f' ({100.0 * wasm_sections["code_bytes"] / total:.1f}%)')
+    print(f'        数据段  {wasm_sections["data_bytes"]} bytes'
+          f' ({100.0 * wasm_sections["data_bytes"] / total:.1f}%)'
+          f'  ← 含内嵌索引产物 {files.get("mkv-index.json", 0)} bytes')
 PYEOF
 
 echo "[mkv] 完成：$(cd "$DIST" && pwd)"

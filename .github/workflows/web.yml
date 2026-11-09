@@ -456,7 +456,7 @@ jobs:
           # 匿名访问不可下载（403），只有 annotation 能通过 check-runs API 读到。
           # run #15 的排查卡点正是这里——门禁失败了，但日志里没有任何 wasm-opt 线索。
           python3 - <<'PY'
-          import glob, json, os, sys
+          import glob, json, os, subprocess, sys
 
           info = json.load(open('dist/deploy-info.json', encoding='utf-8'))
           wasms = glob.glob('dist/assets/*.wasm')
@@ -470,11 +470,70 @@ jobs:
           version = info.get('wasm_opt_version')
           print('wasm bytes: %d  optimization: %s' % (size, opt))
           print('wasm-opt 版本: %s' % version)
+
+          # ---------- 分项体积归因（代码段 / 数据段 / 内嵌索引产物） ----------
+          # 总量门禁只能回答「过没过」，回答不了「**为什么**」。
+          # 2026-11-09 评审实测：diff 引擎与 `office_locator` 已被完全 DCE，
+          # 真正随知识库线性增长的是**内嵌的索引产物**（include_str! 编译进 wasm），
+          # 它落在 **data 段**——与业务代码的增长来源完全不同。
+          #
+          # 设计上刻意分成三层，避免「诊断门禁」意外收紧既有上限：
+          #   · 总量 800,000      —— 硬门禁（既有）
+          #   · 索引产物 100,000  —— 硬门禁，**架构上限**语义：
+          #     索引产物就是「知识库规模」的代理量。它超了意味着
+          #     「整体内嵌进 wasm」这条路已经走不动了，需要分库或远端热替换。
+          #     这个信号不该等到撞上 800K 才发现。
+          #   · 数据段 220,000    —— 硬门禁，静态数据总量的架构上限
+          #   · 代码段            —— **只做诊断**，不单独设硬门禁：
+          #     代码段是 wasm 主体，膨胀必然先撞总量门禁；
+          #     若给它单独设硬门禁，会在总量尚未超限时提前失败，
+          #     等于用「诊断」悄悄收紧了既有上限——这正是要避免的。
+          #
+          # 归因是**确定性**的，不靠占比猜测：
+          # 索引产物一旦被 100,000 的独立门禁约束住，它对总量的贡献就是有界的；
+          # 此时总量仍然超限，那么增量**必然**来自代码段（或其余静态数据），
+          # 于是可以直接说「是业务代码膨胀」，而无需任何魔法比例。
+          breakdown = None
+          try:
+              raw = subprocess.check_output(
+                  ['python3', 'scripts/wasm-sections.py', wasms[0], '--json'],
+                  stderr=subprocess.STDOUT).decode('utf-8')
+              breakdown = json.loads(raw)
+          except Exception as exc:
+              print('::warning::wasm 段构成归因失败（不影响门禁判定）：%s' % exc)
+
+          ARTIFACT_LIMIT = 100000
+          DATA_LIMIT = 220000
+          code_b = data_b = artifact_b = 0
+          if breakdown:
+              code_b = breakdown['code_bytes']
+              data_b = breakdown['data_bytes']
+              artifact_b = os.path.getsize('dist/mkv-index.json')
+              print('分项体积：代码段 %d / 数据段 %d / 内嵌索引产物 %d bytes'
+                    % (code_b, data_b, artifact_b))
+
+          if artifact_b >= ARTIFACT_LIMIT:
+              print('::error::内嵌索引产物超内嵌上限: %d bytes（阈值 %d）'
+                    % (artifact_b, ARTIFACT_LIMIT))
+              print('::error::→ 索引产物是「知识库规模」的代理量。'
+                    '知识库已大到不适合整体内嵌进 wasm，'
+                    '需要分库，或改用远端热替换（MKV_WEB_INDEX_URL）')
+              sys.exit(1)
+          if breakdown and data_b >= DATA_LIMIT:
+              print('::error::数据段超架构上限: %d bytes（阈值 %d）' % (data_b, DATA_LIMIT))
+              print('::error::→ 静态数据总量已不适合内嵌，'
+                    '内嵌索引产物占 %d bytes，需分库或改用远端热替换' % artifact_b)
+              sys.exit(1)
           if size >= 800000:
               print('::error::wasm 未被有效优化: %d bytes（阈值 800000）' % size)
               print('::error::wasm-opt 版本: %s' % version)
               print('::error::wasm-opt 问题: %s' % (issue or '未记录（可能 wasm-opt 未找到）'))
               print('::error::优化记录: %s' % opt)
+              if breakdown:
+                  print('::error::→ 归因：内嵌索引产物仅 %d bytes（受 %d 上限约束，未超），'
+                        '因此增量来自业务代码段 %d bytes；'
+                        '用 scripts/wasm-size-by-name.py 定位具体函数'
+                        % (artifact_b, ARTIFACT_LIMIT, code_b))
               sys.exit(1)
           if not opt:
               print('::error::产物体积达标但缺少优化记录，门禁逻辑异常，请检查 publish-web.sh')
@@ -488,7 +547,7 @@ jobs:
           npm i playwright
           npx playwright install --with-deps chromium
 
-      - name: 对 dist/ 跑 35 项浏览器交互回归
+      - name: 对 dist/ 跑 37 项浏览器交互回归
         run: |
           set -euo pipefail
           python3 -m http.server 8080 --bind 127.0.0.1 --directory dist >/tmp/mkv-http.log 2>&1 &
