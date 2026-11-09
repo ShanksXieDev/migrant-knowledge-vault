@@ -192,8 +192,14 @@ impl KnowledgeService for NativeService {
     /// 支持在原生 Office 应用内定位（F-06 进阶③）。
     ///
     /// Native 端有本地进程能力；Web 端是预构建只读索引，没有这条路径。
+    ///
+    /// 但「有本地进程能力」**不等于**「当前平台能唤起原生应用」——
+    /// `office_locator::current_platform()` 只认 Windows / macOS / Linux，
+    /// 移动端（Android / iOS）返回 `None`。
+    /// 因此这里按**平台**判定而不是恒 `true`：
+    /// 否则 Mobile 端会渲染出一个点了必然报错的按钮——那属于谎报能力。
     fn supports_office_locate(&self) -> bool {
-        true
+        crate::office_locator::current_platform().is_some()
     }
 
     /// 在原生 Office 应用内定位到引用片段（F-06 进阶③）。

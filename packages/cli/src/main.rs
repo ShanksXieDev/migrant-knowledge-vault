@@ -520,8 +520,13 @@ fn cmd_export_web(root: PathBuf, rest: &[String]) -> Result<()> {
     // 导出前刷新索引：保证产物反映知识库的当前内容，
     // 避免「知识库尚未建索引 → 静默产出空产物」这类坑。
     // （应用词典时 `apply_domain_dict` 已触发重建，无需重复。）
+    //
+    // 用 `reindex_keeping_ref_snapshots`：导出 Web 产物**不该**顺手把
+    // Desktop 侧的「源变更检测基线」清零——那是两个独立的语义。
     if dict_text.is_none() {
-        let report = vault.reindex(None).context("重建索引失败")?;
+        let report = vault
+            .reindex_keeping_ref_snapshots(None)
+            .context("重建索引失败")?;
         println!(
             "[mkv] 索引已刷新：扫描 {} / 入库 {} / 链接 {} 条",
             report.scanned,

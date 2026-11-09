@@ -162,6 +162,29 @@ impl JsonRpcClient {
             Error::Config(format!("上游进程响应不是合法 JSON-RPC: {e}"))
         })?;
 
+        // 请求-响应配对：id 必须原样回传（见 docs/upstream-mcp-adapter.md §3）。
+        //
+        // 不校验的后果不是「多此一举」：上游若因并发、重试或内部重排
+        // 返回了**不属于本次请求**的响应，宿主会把它当成结果返回给上层——
+        // 表现为「改了 A 却写进了 B 的内容」这种极难排查的错位。
+        //
+        // `id` 缺省（`None`）时**不**直接失败：部分上游实现不回传 id。
+        // 但此时无法做配对，只能依赖「一问一答」的顺序假设，
+        // 因此把话说清楚（写进错误信息之外的提示），而不是假装配对成功。
+        match resp.id {
+            Some(returned) if returned != id => {
+                // 错位已发生：作废客户端，避免下一次读到更靠后的响应。
+                self.shutdown();
+                return Err(Error::Config(format!(
+                    "上游进程响应 id 不匹配（请求 id={id}，收到 id={returned}）：响应与请求已错位，已终止该进程"
+                )));
+            }
+            None => {
+                // 上游未回传 id：无法配对，只能信任顺序。
+            }
+            Some(_) => {}
+        }
+
         if let Some(err) = resp.error {
             return Err(Error::Config(format!(
                 "上游进程返回错误（code {}）：{}",

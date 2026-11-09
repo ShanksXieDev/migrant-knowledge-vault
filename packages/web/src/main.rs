@@ -79,8 +79,9 @@ fn App() -> Element {
 
 #[cfg(test)]
 mod tests {
+    // 不再单独 `use dioxus::prelude::*`——`use super::*` 已经把它带进来了，
+    // 重复导入反而会触发「unused import」警告。
     use super::*;
-    use dioxus::prelude::*;
 
     /// 把整个 Web 端界面渲染成 HTML（SSR）。
     ///

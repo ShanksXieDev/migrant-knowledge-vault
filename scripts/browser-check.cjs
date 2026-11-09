@@ -431,6 +431,16 @@ async function shot(page, name) {
       screenshots.push(await shot(page, '05-reference-view.png'));
 
       await page.locator('.mkv-ref-bar button').filter({ hasText: '刷新引用' }).click();
+      // Dioxus 的重绘是异步的：点击后立刻读状态栏存在竞态窗口，
+      // 因此显式等「已刷新」出现再断言。
+      await page.waitForFunction(
+        () => {
+          const s = document.querySelector('.mkv-topbar-status');
+          return s && s.textContent.includes('已刷新');
+        },
+        null,
+        { timeout: 10000 }
+      );
       const refreshStatus = (await page.locator('.mkv-topbar-status').innerText()).trim();
       check(
         'C2 刷新引用按钮可用',
@@ -438,26 +448,33 @@ async function shot(page, name) {
         `status="${refreshStatus}"`
       );
 
-      // C4（F-06 进阶③）：Web 只读端**不得**出现「在 Office 中打开」按钮。
-      // 浏览器里没有本地进程能力，按钮点了必然失败——出现即属于谎报能力。
-      //
-      // 必须在 C3 跳转**之前**测量：C3 点卡片会跳到源文档（模具台账.xlsx），
-      // 那个文档没有引用卡片，在那里数按钮恒为 0，断言会假通过。
-      const officeBtns = await page.locator('.mkv-ref-office').count();
-      check(
-        'C4 Web 端不显示「在 Office 中打开」按钮',
-        officeBtns === 0 && refCards >= 4,
-        `mkv-ref-office 按钮数=${officeBtns}（应为 0），当前页引用卡片 ${refCards} 张（须 ≥4，否则本项无意义）`
-      );
-
       // C5（F-06 进阶②）：产物与源文件一致时**不得**出现差异块。
       // 这是「基线必须存全文、否则长段落每次都误报变更」这条不变式的浏览器级验证。
+      //
+      // 计数与守卫必须在**同一时刻**采集：
+      // 只断言「不该出现的元素不存在」是不够的——还必须断言「该出现的元素存在」，
+      // 否则在错误的页面（没有引用卡片的页面）上断言会无声通过。
       const diffBlocks = await page.locator('.mkv-ref-diff').count();
       const refWraps = await page.locator('.mkv-ref-wrap').count();
       check(
         'C5 源未变更时引用卡片不显示差异块',
         diffBlocks === 0 && refWraps >= 4,
         `差异块=${diffBlocks}（应为 0）/ 引用包裹层=${refWraps}（须 ≥4）`
+      );
+
+      // C4（F-06 进阶③）：Web 只读端**不得**出现「在 Office 中打开」按钮。
+      // 浏览器里没有本地进程能力，按钮点了必然失败——出现即属于谎报能力。
+      //
+      // 必须在 C3 跳转**之前**测量：C3 点卡片会跳到源文档（模具台账.xlsx），
+      // 那个文档没有引用卡片，在那里数按钮恒为 0，断言会假通过。
+      // 守卫（引用卡片数）也必须**现采**，不能复用刷新前的旧计数——
+      // 否则「刷新把卡片渲染坏了」这种情况会被过期的守卫值掩盖过去。
+      const officeBtns = await page.locator('.mkv-ref-office').count();
+      const refCardsNow = await page.locator('.mkv-ref-card').count();
+      check(
+        'C4 Web 端不显示「在 Office 中打开」按钮',
+        officeBtns === 0 && refCardsNow >= 4,
+        `mkv-ref-office 按钮数=${officeBtns}（应为 0），当前页引用卡片 ${refCardsNow} 张（须 ≥4，否则本项无意义）`
       );
 
       await page.locator('.mkv-ref-card').first().click();

@@ -96,9 +96,43 @@ impl Vault {
     }
 
     /// 全量重建索引与元数据。
+    ///
+    /// 全量重建 = 「我确认已看到当前内容」，因此**顺带刷新引用源片段快照基线**
+    /// （F-06 进阶②）：之后的增量修改（文件监听 / 编辑保存）不刷新基线，
+    /// 于是源文件被改动时能被识别为变更。
+    ///
+    /// 若调用方只想重建索引、**不想动**变更检测基线（例如导出 Web 产物），
+    /// 请改用 [`Self::reindex_keeping_ref_snapshots`]。
     pub fn reindex(
         &mut self,
         mut progress: Option<&mut dyn FnMut(IndexProgress)>,
+    ) -> Result<IndexReport> {
+        let report = self.reindex_impl(&mut progress)?;
+        self.refresh_reference_snapshots()?;
+        Ok(report)
+    }
+
+    /// 全量重建索引与元数据，但**保留**引用源片段快照基线。
+    ///
+    /// # 为什么需要这个变体
+    ///
+    /// 「刷新基线」与「重建索引」是两个**独立语义**，此前被捆在一起，
+    /// 于是产生了一个顺带副作用：**导出一份 Web 产物会把 Desktop 侧的
+    /// 变更检测基线清零**——跑一次 `mkv export-web`，Desktop 就再也看不出
+    /// 「这段引用相对上次改过」，而用户没有任何提示。
+    ///
+    /// Web 导出只是想把当前内容打包成产物，不该动 Desktop 的基线。
+    pub fn reindex_keeping_ref_snapshots(
+        &mut self,
+        mut progress: Option<&mut dyn FnMut(IndexProgress)>,
+    ) -> Result<IndexReport> {
+        self.reindex_impl(&mut progress)
+    }
+
+    /// 重建索引与元数据的共同实现（不含快照基线处理）。
+    fn reindex_impl(
+        &mut self,
+        progress: &mut Option<&mut dyn FnMut(IndexProgress)>,
     ) -> Result<IndexReport> {
         let started = std::time::Instant::now();
         let scan_result = self.scan()?;
@@ -184,11 +218,10 @@ impl Vault {
         self.meta
             .set_state("domain_dict_hash", &self.index.domain_dict_hash())?;
 
-        // F-06 进阶：重建引用源片段快照基线。
-        // 全量重建 = 「我确认已看到当前内容」，因此此刻的源片段成为新基线；
-        // 之后的增量修改（文件监听 / 编辑保存）不会刷新基线，
-        // 于是源文件被改动时，引用卡片能给出「源已变更」的行级差异。
-        self.refresh_reference_snapshots()?;
+        // 注：引用源片段快照基线的刷新**不在这里**。
+        // 它与「重建索引」是两个独立语义，由 `reindex` / `reindex_keeping_ref_snapshots`
+        // 两个入口分别决定——否则「导出一份 Web 产物」会顺手把 Desktop 侧的
+        // 变更检测基线清零（详见后者文档）。
 
         if let Some(cb) = progress.as_mut() {
             cb(IndexProgress {
@@ -541,7 +574,7 @@ impl Vault {
     ///
     /// 每次调用都重新读取源文件，因此源更新后卡片内容会随之刷新。
     pub fn references(&self, rel_path: &str) -> Result<Vec<crate::refs::ReferenceView>> {
-        let Ok(source) = self.read_document(rel_path) else {
+        let Ok(source) = self.read_ref_text(rel_path) else {
             return Ok(Vec::new());
         };
         // 没有引用语法的文档不必扫全库（引用解析要读全库正文与节点清单，代价不低）。
@@ -558,6 +591,31 @@ impl Vault {
         ))
     }
 
+    /// 读取**用于引用解析**的文本。
+    ///
+    /// # 为什么必须是抽取文本而不是原始字节
+    ///
+    /// 原始字节对 `.xlsx` / `.pptx` / `.docx` 是 **ZIP 二进制**，对 `.vsdx` 同理。
+    /// 直接拿它做片段切分，切出来的是二进制乱码——引用卡片显示一堆乱码，
+    /// 差异高亮更是拿二进制在比二进制（毫无意义）。
+    ///
+    /// 2026-11-09 评审实测（修复前）：Desktop 端对 `模具台账.xlsx` 的引用卡片
+    /// snippet 是 `i�\u{10}��...`，对 `项目方案.pptx` 是 `PK\x03\x04...`；
+    /// 而 Web 端（构建期用抽取文本）显示的是 `台账: PN-1024 | MDL-08`。
+    /// 同一功能在两端给出完全不同的内容，Desktop 侧还叠加了
+    /// 「基线存二进制 → 与全文永远不等 → 永远报『源已变更』」的假差异。
+    ///
+    /// 因此：**Desktop 与 Web 必须用同一份文本基准**，否则两端结论会互相矛盾。
+    ///
+    /// 抽取失败（格式不支持 / 解析出错）时退回原文——纯文本格式仍可用，
+    /// 总比整条功能不可用好。
+    fn read_ref_text(&self, rel_path: &str) -> Result<String> {
+        match self.read_extracted_text(rel_path) {
+            Ok(text) => Ok(text),
+            Err(_) => self.read_document(rel_path),
+        }
+    }
+
     /// 汇总全库正文与流程图节点清单（引用解析的公共输入）。
     fn reference_sources(
         &self,
@@ -568,13 +626,15 @@ impl Vault {
         let mut all: Vec<(String, String, Format)> = Vec::new();
         let mut node_targets: Vec<(String, Format)> = Vec::new();
         for d in self.documents()? {
-            let Ok(text) = self.read_document(&d.path) else {
+            let Ok(text) = self.read_ref_text(&d.path) else {
                 continue;
             };
             let format = Format::from_path(Path::new(&d.path)).unwrap_or(Format::Markdown);
             node_targets.push((d.path.clone(), format));
             all.push((d.path.clone(), text, format));
         }
+        // 节点清单必须读**原始字节**（.drawio 的 XML / .vsdx 的 zip），
+        // 抽取文本拿不到这些信息——这一路刻意不走 `read_ref_text`。
         let node_map = crate::diagram::build_node_map(self.storage.as_ref(), &node_targets);
         Ok((all, node_map))
     }

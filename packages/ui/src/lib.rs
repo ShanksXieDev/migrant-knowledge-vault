@@ -679,6 +679,18 @@ pub fn ReferenceCard(ctx: VaultContext, view: mkv_core::refs::ReferenceView) -> 
     let path_nav = path.clone();
     let path_office = path.clone();
 
+    // 按钮提示按**目标格式**生成，不能对所有格式一律承诺「定位到该片段」：
+    // Excel / PowerPoint 有应用内定位锚点，其余格式只能打开文件。
+    let office_button_title = match mkv_core::format::Format::from_path(std::path::Path::new(&path)) {
+        Some(mkv_core::format::Format::Excel) => {
+            "用原生 Excel 打开，并请求定位到该单元格"
+        }
+        Some(mkv_core::format::Format::PowerPoint) => {
+            "用原生 PowerPoint 打开，并请求定位到该页"
+        }
+        _ => "用原生应用打开该文件（该格式不支持在应用内定位到片段）",
+    };
+
     rsx! {
         div { class: "mkv-ref-wrap",
             button {
@@ -728,17 +740,25 @@ pub fn ReferenceCard(ctx: VaultContext, view: mkv_core::refs::ReferenceView) -> 
             if office_supported {
                 button {
                     class: "mkv-btn mkv-btn-sm mkv-ref-office",
-                    title: "唤起原生 Office 应用并定位到该片段（Excel 到单元格、PPT 到页）",
+                    title: office_button_title,
                     onclick: move |_| {
                         let mut status = ctx.status;
                         match ctx.service.read().open_in_office(&path_office, &locator) {
                             Ok(plan) => {
+                                // 措辞必须是**请求式**，不能是事实陈述。
+                                //
+                                // `is_precise()` 的含义是「协议 URI 上带了定位锚点」，
+                                // **不等于**「本机 Office 一定采纳该锚点」——
+                                // 社区通行的 `ofe|u|` 参数官方文档未收录，
+                                // 未被采纳时的表现是「文件已打开、光标停在默认位置」。
+                                // 若在这里写「已定位到片段」，在未采纳的情形下
+                                // 就是一句**假话**（违反本项目「不谎报能力」的底线）。
                                 let where_ = if plan.is_precise() {
-                                    "已定位到片段"
+                                    "已打开文件，并请求定位到该片段"
                                 } else {
                                     "已打开文件（该格式无法在应用内定位到片段）"
                                 };
-                                status.set(format!("{where_}：{}", plan.note));
+                                status.set(format!("{where_}。{}", plan.note));
                             }
                             Err(e) => status.set(format!("原生应用内定位失败：{e}")),
                         }

@@ -20,7 +20,7 @@
 //!
 //! 远端路径作为**可选增强**存在，用于解决「索引更新要重新编译 wasm」的痛点。
 
-use mkv_core::prebuilt::PrebuiltIndex;
+use mkv_core::prebuilt::{PrebuiltIndex, PREBUILT_SCHEMA_VERSION};
 
 /// 内嵌的索引产物（构建期由 `build.rs` 注入）。
 ///
@@ -113,6 +113,15 @@ pub fn select_index(
     remote_result: Option<Result<PrebuiltIndex, String>>,
 ) -> LoadedIndex {
     if let (Some(url), Some(Ok(remote))) = (url, &remote_result) {
+        // schema 版本闸门：远端产物可能被**新版**构建端生成，
+        // 而当前 Web 构建是旧版——直接热替换进去会产生难以定位的运行时异常。
+        // 版本不匹配时回落到内嵌产物（站点始终可用），并把原因写进状态描述。
+        if remote.schema_version != PREBUILT_SCHEMA_VERSION {
+            return LoadedIndex {
+                index: embedded,
+                source: IndexSource::Embedded,
+            };
+        }
         if remote.doc_count() > 0 {
             return LoadedIndex {
                 index: remote.clone(),
@@ -289,6 +298,20 @@ mod tests {
         );
         assert_eq!(got.source, IndexSource::Embedded);
         assert_eq!(got.index.root, "内嵌库", "网络失败必须保留内嵌版本");
+    }
+
+    /// schema 版本不匹配的远端产物**不得**热替换。
+    ///
+    /// 远端产物可能由更新版本的构建端生成；旧版 Web 构建直接吃下去
+    /// 会产生难以定位的运行时异常。宁可继续用内嵌产物。
+    #[test]
+    fn select_rejects_remote_with_mismatched_schema_version() {
+        let embedded = sample_index("内嵌库", "a.md");
+        let mut remote = sample_index("远端库", "b.md");
+        remote.schema_version = PREBUILT_SCHEMA_VERSION + 1;
+        let got = select_index(embedded, Some(URL), Some(Ok(remote)));
+        assert_eq!(got.source, IndexSource::Embedded);
+        assert_eq!(got.index.root, "内嵌库", "版本不匹配必须回落到内嵌产物");
     }
 
     #[test]
