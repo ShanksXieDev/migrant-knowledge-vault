@@ -1,0 +1,80 @@
+# Migrant Knowledge Vault —— Desktop 质量门禁
+#
+# 插件动态库构建 → 全量测试 → 正则引擎差分对拍。
+# 移动端已于 2026-11-09 取消（仅保留 Desktop / CLI）。
+
+name: Desktop — build & verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: 质量门禁（测试 + 构建 + 差分对拍）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 安装 Linux 系统依赖（desktop）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libxdo-dev patchelf \
+            cmake pkg-config zlib1g-dev
+
+      # ---------- 前置：构建 7 个编辑器动态库，供 dlopen 端到端测试加载 ----------
+      - name: 构建编辑器插件动态库
+        run: cargo build --workspace
+
+      # ---------- 质量门禁 1：全量测试（P0 bug = 0） ----------
+      - name: 全量测试
+        run: |
+          set +e
+          cargo test --workspace 2>&1 | tee /tmp/mkv-cargo-test.log
+          RC=${PIPESTATUS[0]}
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::cargo test --workspace 失败（exit ${RC}），关键输出如下："
+            grep -nE "^error|error\[E|panicked at|FAILED|failures:|test result: FAILED|could not compile|undefined reference|No such file|not found" \
+              /tmp/mkv-cargo-test.log | tail -30 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit "$RC"
+
+      # ---------- 质量门禁 2：正则引擎差分对拍 ----------
+      #
+      # 自研正则引擎（F-12）与 Python `re` 做 4000 例差分对拍，真实差异必须为 0。
+      # 含 `$` 的差异属有意偏差：Rust 侧采用严格末尾语义（与 Rust `regex` 一致），
+      # Python 允许在末尾换行前匹配。
+      - name: 正则引擎差分对拍（与 Python re 对齐）
+        run: |
+          set -euo pipefail
+          mkdir -p .fuzz_tmp
+          python3 packages/core/examples/regex_fuzz_ref.py > .fuzz_tmp/ref.tsv
+          cargo run --release -p mkv-core --no-default-features \
+            --example regex_fuzz_run < .fuzz_tmp/ref.tsv > .fuzz_tmp/got.tsv
+          python3 packages/core/examples/regex_fuzz_cmp.py .fuzz_tmp/ref.tsv .fuzz_tmp/got.tsv \
+            | tee .fuzz_tmp/cmp.txt
+          REAL="$(grep -E '^真实差异' .fuzz_tmp/cmp.txt | sed -E 's/[^0-9]*([0-9]+).*/\1/')"
+          echo "真实差异数：${REAL:-未知}"
+          if [ "${REAL:-x}" != "0" ]; then
+            echo "::error::正则引擎与 Python re 存在 ${REAL:-未知} 处真实差异（详见 .fuzz_tmp/cmp.txt）"
+            exit 1
+          fi
+          echo "::notice::正则引擎与 Python re 语义一致（真实差异 0）"
