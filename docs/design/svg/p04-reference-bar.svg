@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" width="960" height="300" role="img" aria-label="P-4 跨格式引用条（三种状态）">
+<title>P-4 跨格式引用条（三种状态）</title>
+<style>
+.bg{fill:#ffffff}
+.panel{fill:#ffffff;stroke:#e9eaef;stroke-width:1}
+.sunken{fill:#f7f8fb}
+.bar{fill:#fbfbfd}
+.divider{stroke:#e9eaef;stroke-width:1}
+.ln{stroke:#c7cad5;stroke-width:1}
+.ln-dash{stroke:#c7cad5;stroke-width:1;stroke-dasharray:3 3}
+.hit{fill:#5b76fe;fill-opacity:.16}
+.t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#555a6a}
+.th{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:12px;font-weight:600;fill:#1c1c1e}
+.t14{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:14px;font-weight:600;fill:#1c1c1e}
+.t18{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:18px;font-weight:600;fill:#1c1c1e}
+.tiny{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;fill:#a5a8b5}
+.micro{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;letter-spacing:.6px;fill:#555a6a}
+.mono{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#555a6a}
+.mono-b{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#1c1c1e}
+.btn{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.btn-p{fill:#5b76fe;stroke:#5b76fe;stroke-width:1}
+.btn-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#1c1c1e}
+.btn-pt{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#ffffff}
+.chip{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.coral{fill:#ffc6c6}.coral-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#600000}
+.teal{fill:#c3faf5}.teal-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#187574}
+.rose{fill:#ffd8f4}
+.orange{fill:#ffe6cd}
+.pink{fill:#fde0f0}
+.red{fill:#fbd4d4}.red-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#8a2020}
+.blue{fill:#5b76fe}
+.gray{fill:#c7cad5}
+.ok{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#00b473}
+.badge{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:9.5px;letter-spacing:.5px;font-weight:600}
+.anno{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:700;fill:#ffffff}
+.sel{fill:#eef1ff;stroke:#5b76fe;stroke-width:1}
+</style>
+<rect class="bg" x="0" y="0" width="960" height="300"/><text x="16" y="36" class="th" >最新</text><rect x="16" y="44" width="928" height="56" rx="10" class="teal" /><text x="34" y="70" class="teal-t" >⬡ 引用自  台账.xlsx › 2024Q1 › B2「营收 120 万」</text><text x="34" y="88" class="teal-t" >内容与源一致</text><text x="928" y="70" class="teal-t" text-anchor="end">定位到源</text><text x="16" y="124" class="th" >已变更</text><rect x="16" y="132" width="928" height="56" rx="10" class="coral" /><text x="34" y="158" class="coral-t" >⬡ 引用自  台账.xlsx › 2024Q1 › B2「营收 120 万」</text><text x="34" y="176" class="coral-t" >⟳ 源已变更 v3 · 快照：营收 120 万（2024-11-02）</text><text x="928" y="158" class="coral-t" text-anchor="end">刷新 / 查看差异</text><text x="16" y="212" class="th" >失效</text><rect x="16" y="220" width="928" height="56" rx="10" class="red" /><text x="34" y="246" class="red-t" >⬡ 引用自  台账-旧.xlsx › B2「营收 120 万」</text><text x="34" y="264" class="red-t" >源文件已删除或移动</text><text x="928" y="246" class="red-t" text-anchor="end">重定位 / 转为纯文本</text>
+</svg>

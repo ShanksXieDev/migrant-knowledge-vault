@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" width="1280" height="560" role="img" aria-label="P-6 内联双链与反链面板">
+<title>P-6 内联双链与反链面板</title>
+<style>
+.bg{fill:#ffffff}
+.panel{fill:#ffffff;stroke:#e9eaef;stroke-width:1}
+.sunken{fill:#f7f8fb}
+.bar{fill:#fbfbfd}
+.divider{stroke:#e9eaef;stroke-width:1}
+.ln{stroke:#c7cad5;stroke-width:1}
+.ln-dash{stroke:#c7cad5;stroke-width:1;stroke-dasharray:3 3}
+.hit{fill:#5b76fe;fill-opacity:.16}
+.t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#555a6a}
+.th{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:12px;font-weight:600;fill:#1c1c1e}
+.t14{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:14px;font-weight:600;fill:#1c1c1e}
+.t18{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:18px;font-weight:600;fill:#1c1c1e}
+.tiny{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;fill:#a5a8b5}
+.micro{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;letter-spacing:.6px;fill:#555a6a}
+.mono{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#555a6a}
+.mono-b{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#1c1c1e}
+.btn{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.btn-p{fill:#5b76fe;stroke:#5b76fe;stroke-width:1}
+.btn-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#1c1c1e}
+.btn-pt{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#ffffff}
+.chip{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.coral{fill:#ffc6c6}.coral-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#600000}
+.teal{fill:#c3faf5}.teal-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#187574}
+.rose{fill:#ffd8f4}
+.orange{fill:#ffe6cd}
+.pink{fill:#fde0f0}
+.red{fill:#fbd4d4}.red-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#8a2020}
+.blue{fill:#5b76fe}
+.gray{fill:#c7cad5}
+.ok{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#00b473}
+.badge{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:9.5px;letter-spacing:.5px;font-weight:600}
+.anno{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:700;fill:#ffffff}
+.sel{fill:#eef1ff;stroke:#5b76fe;stroke-width:1}
+</style>
+<rect class="bg" x="0" y="0" width="1280" height="560"/><rect x="16" y="16" width="700" height="528" class="panel" /><text x="40" y="52" class="t14" >周报.md</text><text x="40" y="84" class="t" >▸ 见 </text><rect class="hit" x="72" y="70" width="118" height="18" rx="4"/><text x="74" y="84" class="mono-b" >[[台账.xlsx#Sheet1!B2]]</text><text x="196" y="84" class="t" >，其值为 120 万</text><rect x="72" y="104" width="300" height="128" rx="12" class="panel" /><text x="88" y="126" class="th" >台账.xlsx › 2024Q1 › B2</text><text x="88" y="148" class="t" >营收 120 万</text><text x="88" y="168" class="tiny" >被 3 处引用 · 最近更新 2 天前</text><line class="divider" x1="88" y1="180" x2="356" y2="180"/><text x="88" y="200" class="tiny" >[ 点击打开并高亮定位 ]</text><line class="divider" x1="40" y1="268" x2="692" y2="268"/><text x="40" y="294" class="th" >链接语法</text><text x="40" y="318" class="mono" >[[方案.pptx#p:7]]   → 出链(wikilink) + 锚点 p:7</text><text x="40" y="340" class="mono" >[[周报#结论]]        → 出链 + 锚点 heading:结论</text><text x="40" y="362" class="mono" >@台账.xlsx#Sheet1!B2 → 出链(at) + 单元格锚点</text><text x="40" y="384" class="mono" >引用块（引擎生成）    → 出链(embed) + 快照内容</text><text x="40" y="424" class="tiny" >解析时机：写入期（引擎保存上报）+ 扫描期（外部改动兜底）</text><text x="40" y="442" class="tiny" >幂等键：mtime + hash；冲突时以扫描期为准</text><rect x="732" y="16" width="532" height="528" class="panel" /><text x="756" y="52" class="t14" >反链（谁引用了我）</text><rect x="1120" y="32" width="120" height="26" rx="8" class="chip" /><text x="1180" y="49" class="t" text-anchor="middle">按时间排序 ▾</text><line class="divider" x1="752" y1="66" x2="1244" y2="66"/><circle cx="764" cy="98" r="4" class="blue"/><text x="780" y="102" class="th" >周报.md › §结论</text><text x="780" y="122" class="tiny" >"营收 120 万" · 2 天前 · 未提交</text><text x="1175" y="108" class="btn-t" text-anchor="middle"></text><line class="ln-dash" x1="756" y1="142" x2="1240" y2="142"/><circle cx="764" cy="190" r="4" class="teal"/><text x="780" y="194" class="th" >复盘.md › L42</text><text x="780" y="214" class="tiny" >"见 [[台账.xlsx#Sheet1!B2]]" · 5 天前</text><text x="1175" y="200" class="btn-t" text-anchor="middle"></text><line class="ln-dash" x1="756" y1="234" x2="1240" y2="234"/><circle cx="764" cy="282" r="4" class="red"/><text x="780" y="286" class="th" >归档/2023.md › 第 4 段</text><text x="780" y="306" class="tiny" >已失效（源文件已移动）</text><rect x="1130" y="276" width="90" height="24" rx="8" class="btn" /><text x="1175" y="292" class="btn-t" text-anchor="middle">重定位</text><line class="ln-dash" x1="756" y1="326" x2="1240" y2="326"/><text x="756" y="396" class="th" >引用（我引用了谁）</text><text x="756" y="418" class="t" >· 台账.xlsx › Sheet1!B2</text><text x="756" y="436" class="t" >· 需求.md › §2 目标</text><line class="divider" x1="752" y1="460" x2="1244" y2="460"/><rect x="756" y="476" width="464" height="30" rx="8" class="panel" /><text x="772" y="496" class="tiny" >搜到 → 跳转 → 看反链 → 顺藤摸瓜（需求 §5.3）</text>
+</svg>

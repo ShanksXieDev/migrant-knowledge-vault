@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 560" width="1100" height="560" role="img" aria-label="P-8 Git 时间线与 diff">
+<title>P-8 Git 时间线与 diff</title>
+<style>
+.bg{fill:#ffffff}
+.panel{fill:#ffffff;stroke:#e9eaef;stroke-width:1}
+.sunken{fill:#f7f8fb}
+.bar{fill:#fbfbfd}
+.divider{stroke:#e9eaef;stroke-width:1}
+.ln{stroke:#c7cad5;stroke-width:1}
+.ln-dash{stroke:#c7cad5;stroke-width:1;stroke-dasharray:3 3}
+.hit{fill:#5b76fe;fill-opacity:.16}
+.t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#555a6a}
+.th{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:12px;font-weight:600;fill:#1c1c1e}
+.t14{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:14px;font-weight:600;fill:#1c1c1e}
+.t18{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:18px;font-weight:600;fill:#1c1c1e}
+.tiny{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;fill:#a5a8b5}
+.micro{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;letter-spacing:.6px;fill:#555a6a}
+.mono{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#555a6a}
+.mono-b{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#1c1c1e}
+.btn{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.btn-p{fill:#5b76fe;stroke:#5b76fe;stroke-width:1}
+.btn-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#1c1c1e}
+.btn-pt{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#ffffff}
+.chip{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.coral{fill:#ffc6c6}.coral-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#600000}
+.teal{fill:#c3faf5}.teal-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#187574}
+.rose{fill:#ffd8f4}
+.orange{fill:#ffe6cd}
+.pink{fill:#fde0f0}
+.red{fill:#fbd4d4}.red-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#8a2020}
+.blue{fill:#5b76fe}
+.gray{fill:#c7cad5}
+.ok{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#00b473}
+.badge{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:9.5px;letter-spacing:.5px;font-weight:600}
+.anno{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:700;fill:#ffffff}
+.sel{fill:#eef1ff;stroke:#5b76fe;stroke-width:1}
+</style>
+<rect class="bg" x="0" y="0" width="1100" height="560"/><rect x="16" y="16" width="520" height="528" class="panel" /><text x="40" y="50" class="t14" >时间线</text><rect x="420" y="32" width="100" height="26" rx="8" class="chip" /><text x="470" y="49" class="t" text-anchor="middle">仅当前文件 ▾</text><line class="divider" x1="36" y1="66" x2="516" y2="66"/><line x1="60" y1="96" x2="60" y2="440" class="ln"/><circle cx="60" cy="100" r="5" class="blue"/><text x="84" y="96" class="mono-b" >c3f91a</text><text x="190" y="96" class="tiny" >自动快照</text><text x="84" y="118" class="th" >修订单价计算口径</text><text x="84" y="136" class="tiny" >2026-11-10 11:02</text><circle cx="60" cy="184" r="5" class="teal"/><text x="84" y="180" class="mono-b" >8a2b10</text><text x="190" y="180" class="tiny" >手动提交</text><text x="84" y="202" class="th" >更新 Q1 台账</text><text x="84" y="220" class="tiny" >2026-11-09 18:41</text><circle cx="60" cy="268" r="5" class="teal"/><text x="84" y="264" class="mono-b" >5d0e44</text><text x="190" y="264" class="tiny" >自动快照</text><text x="84" y="286" class="th" >补充架构图引用</text><text x="84" y="304" class="tiny" >2026-11-08 09:15</text><circle cx="60" cy="352" r="5" class="teal"/><text x="84" y="348" class="mono-b" >2b7c31</text><text x="190" y="348" class="tiny" >自动快照</text><text x="84" y="370" class="th" >周报自动快照</text><text x="84" y="388" class="tiny" >2026-11-07 22:03</text><circle cx="60" cy="436" r="5" class="gray"/><text x="84" y="432" class="mono-b" >初始导入</text><text x="190" y="432" class="tiny" >初始</text><text x="84" y="454" class="th" >导入知识库</text><text x="84" y="472" class="tiny" >2026-11-01 10:00</text><rect x="40" y="470" width="472" height="32" rx="8" class="panel" /><text x="56" y="490" class="tiny" >自动快照：默认 10 分钟或空闲 60s；跳过仅索引变动</text><rect x="552" y="16" width="532" height="528" class="panel" /><text x="576" y="50" class="t14" >diff：方案.pptx</text><text x="1064" y="50" class="t" text-anchor="end">还原到此版本</text><line class="divider" x1="572" y1="66" x2="1064" y2="66"/><text x="576" y="92" class="mono-b" >c3f91a</text><text x="576" y="116" class="t" >+  营收 120 万 → 138 万</text><text x="576" y="138" class="t" >-  营收 120 万</text><text x="576" y="176" class="mono-b" >8a2b10</text><text x="576" y="200" class="tiny" >(无差异)</text><line class="divider" x1="572" y1="220" x2="1064" y2="220"/><text x="576" y="248" class="th" >二进制文件（xlsx / pptx）的 diff</text><text x="576" y="274" class="tiny" >· 工作表：2024Q1 → 2024Q1</text><text x="576" y="296" class="tiny" >· 单元格：B2「营收 120 万」→「营收 138 万」</text><text x="576" y="318" class="tiny" >· 页数：24 → 24（幻灯片 7 版式变更）</text><text x="576" y="340" class="tiny" >· 结构化摘要，不逐字节对比</text><rect x="576" y="372" width="488" height="60" rx="8" class="panel" /><text x="592" y="396" class="tiny" >回滚策略：生成新提交而非 reset，历史不丢</text><text x="592" y="416" class="tiny" >（Git 安全约束：禁止 force / hard reset）</text><rect x="576" y="448" width="488" height="30" rx="8" class="panel" /><text x="592" y="468" class="tiny" >Ctrl+S：文档区＝保存；工作区＝打开提交面板</text>
+</svg>

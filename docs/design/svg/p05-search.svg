@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760" role="img" aria-label="P-5 搜索中心（结果 + 上下文 + 过滤）">
+<title>P-5 搜索中心（结果 + 上下文 + 过滤）</title>
+<style>
+.bg{fill:#ffffff}
+.panel{fill:#ffffff;stroke:#e9eaef;stroke-width:1}
+.sunken{fill:#f7f8fb}
+.bar{fill:#fbfbfd}
+.divider{stroke:#e9eaef;stroke-width:1}
+.ln{stroke:#c7cad5;stroke-width:1}
+.ln-dash{stroke:#c7cad5;stroke-width:1;stroke-dasharray:3 3}
+.hit{fill:#5b76fe;fill-opacity:.16}
+.t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#555a6a}
+.th{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:12px;font-weight:600;fill:#1c1c1e}
+.t14{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:14px;font-weight:600;fill:#1c1c1e}
+.t18{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:18px;font-weight:600;fill:#1c1c1e}
+.tiny{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;fill:#a5a8b5}
+.micro{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;letter-spacing:.6px;fill:#555a6a}
+.mono{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#555a6a}
+.mono-b{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#1c1c1e}
+.btn{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.btn-p{fill:#5b76fe;stroke:#5b76fe;stroke-width:1}
+.btn-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#1c1c1e}
+.btn-pt{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#ffffff}
+.chip{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.coral{fill:#ffc6c6}.coral-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#600000}
+.teal{fill:#c3faf5}.teal-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#187574}
+.rose{fill:#ffd8f4}
+.orange{fill:#ffe6cd}
+.pink{fill:#fde0f0}
+.red{fill:#fbd4d4}.red-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#8a2020}
+.blue{fill:#5b76fe}
+.gray{fill:#c7cad5}
+.ok{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#00b473}
+.badge{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:9.5px;letter-spacing:.5px;font-weight:600}
+.anno{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:700;fill:#ffffff}
+.sel{fill:#eef1ff;stroke:#5b76fe;stroke-width:1}
+</style>
+<rect class="bg" x="0" y="0" width="1280" height="760"/><text x="24" y="40" class="t18" >搜索中心</text><text x="160" y="40" class="t" >跨格式全文检索 · 命中可跳转原文精确位置</text><rect x="24" y="56" width="1232" height="44" rx="8" class="panel" /><text x="44" y="84" class="t" >🔍</text><text x="66" y="84" class="th" >营收 120</text><rect class="hit" x="126" y="70" width="34" height="18" rx="4"/><text x="1200" y="84" class="tiny" text-anchor="end">12 个结果 · 38ms</text><rect x="24" y="112" width="96" height="28" rx="8" class="chip" /><text x="38" y="130" class="t" >格式：全部 ▾</text><rect x="132" y="112" width="104" height="28" rx="8" class="chip" /><text x="146" y="130" class="t" >标签：财务 ▾</text><rect x="248" y="112" width="104" height="28" rx="8" class="chip" /><text x="262" y="130" class="t" >路径：需求/ ▾</text><rect x="364" y="112" width="104" height="28" rx="8" class="chip" /><text x="378" y="130" class="t" >时间：近 30 天 ▾</text><rect x="480" y="112" width="72" height="28" rx="8" class="sel" /><text x="494" y="130" class="t" >正则 ⚡</text><rect x="0" y="152" width="260" height="608" class="sunken" /><line class="divider" x1="260" y1="152" x2="260" y2="760"/><text x="24" y="182" class="th" >过滤</text><text x="24" y="210" class="micro" >格式</text><text x="32" y="232" class="th" >☑ 全部</text><text x="240" y="232" class="tiny" text-anchor="end">12</text><text x="32" y="256" class="t" >☐ xlsx</text><text x="240" y="256" class="tiny" text-anchor="end">3</text><text x="32" y="280" class="t" >☐ pptx</text><text x="240" y="280" class="tiny" text-anchor="end">2</text><text x="32" y="304" class="t" >☐ docx</text><text x="240" y="304" class="tiny" text-anchor="end">5</text><text x="32" y="328" class="t" >☐ md</text><text x="240" y="328" class="tiny" text-anchor="end">2</text><text x="24" y="368" class="micro" >标签</text><text x="32" y="392" class="th" >☑ 财务</text><text x="32" y="416" class="t" >☐ 产品</text><text x="32" y="440" class="t" >☐ 归档</text><text x="24" y="480" class="micro" >时间范围</text><rect x="24" y="492" width="212" height="30" rx="8" class="panel" /><text x="38" y="512" class="tiny" >2026-10-11 → 2026-11-10</text><text x="24" y="556" class="micro" >索引状态</text><circle cx="30" cy="574" r="4" class="teal"/><text x="42" y="578" class="tiny" >已索引 12,480 篇 · 覆盖 9 类格式</text><rect x="284" y="176" width="972" height="84" rx="8" class="panel" /><text x="304" y="202" class="th" >1. 台账.xlsx › 2024Q1 › B2</text><rect x="1150" y="188" width="90" height="20" rx="6" class="sunken" /><text x="1195" y="202" class="micro" text-anchor="middle">xlsx</text><text x="304" y="228" class="t" >…预计</text><rect class="hit" x="454" y="214" width="48" height="17" rx="4"/><text x="456" y="228" class="t" >营收 120</text><text x="514" y="228" class="t" > 万，同比 +12%…</text><text x="1236" y="246" class="tiny" text-anchor="end">定位 ⟩</text><rect x="284" y="272" width="972" height="84" rx="8" class="panel" /><text x="304" y="298" class="th" >2. 方案.pptx › p.7</text><rect x="1150" y="284" width="90" height="20" rx="6" class="sunken" /><text x="1195" y="298" class="micro" text-anchor="middle">pptx</text><text x="304" y="324" class="t" >…Q1 </text><rect class="hit" x="454" y="310" width="48" height="17" rx="4"/><text x="456" y="324" class="t" >营收 120</text><text x="514" y="324" class="t" > 万达成情况…</text><text x="1236" y="342" class="tiny" text-anchor="end">定位 ⟩</text><rect x="284" y="368" width="972" height="84" rx="8" class="panel" /><text x="304" y="394" class="th" >3. 周报.md › §结论</text><rect x="1150" y="380" width="90" height="20" rx="6" class="sunken" /><text x="1195" y="394" class="micro" text-anchor="middle">md</text><text x="304" y="420" class="t" >…据台账，</text><rect class="hit" x="454" y="406" width="48" height="17" rx="4"/><text x="456" y="420" class="t" >营收 120</text><text x="514" y="420" class="t" > 万已确认…</text><text x="1236" y="438" class="tiny" text-anchor="end">定位 ⟩</text><text x="284" y="484" class="tiny" >…… 省略 9 条</text><rect x="284" y="504" width="972" height="56" rx="8" class="panel" /><text x="304" y="528" class="tiny" >未命中时的引导：检查索引状态 / 建立检索别名 / 用正则重试</text><text x="284" y="546" class="tiny" >正则开关开启时非法表达式会在输入框下方给出行内错误并禁用检索</text>
+</svg>

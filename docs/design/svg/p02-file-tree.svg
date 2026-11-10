@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 620" width="480" height="620" role="img" aria-label="P-2 文件树侧栏">
+<title>P-2 文件树侧栏</title>
+<style>
+.bg{fill:#ffffff}
+.panel{fill:#ffffff;stroke:#e9eaef;stroke-width:1}
+.sunken{fill:#f7f8fb}
+.bar{fill:#fbfbfd}
+.divider{stroke:#e9eaef;stroke-width:1}
+.ln{stroke:#c7cad5;stroke-width:1}
+.ln-dash{stroke:#c7cad5;stroke-width:1;stroke-dasharray:3 3}
+.hit{fill:#5b76fe;fill-opacity:.16}
+.t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#555a6a}
+.th{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:12px;font-weight:600;fill:#1c1c1e}
+.t14{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:14px;font-weight:600;fill:#1c1c1e}
+.t18{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:18px;font-weight:600;fill:#1c1c1e}
+.tiny{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;fill:#a5a8b5}
+.micro{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;letter-spacing:.6px;fill:#555a6a}
+.mono{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#555a6a}
+.mono-b{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#1c1c1e}
+.btn{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.btn-p{fill:#5b76fe;stroke:#5b76fe;stroke-width:1}
+.btn-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#1c1c1e}
+.btn-pt{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#ffffff}
+.chip{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.coral{fill:#ffc6c6}.coral-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#600000}
+.teal{fill:#c3faf5}.teal-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#187574}
+.rose{fill:#ffd8f4}
+.orange{fill:#ffe6cd}
+.pink{fill:#fde0f0}
+.red{fill:#fbd4d4}.red-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#8a2020}
+.blue{fill:#5b76fe}
+.gray{fill:#c7cad5}
+.ok{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#00b473}
+.badge{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:9.5px;letter-spacing:.5px;font-weight:600}
+.anno{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:700;fill:#ffffff}
+.sel{fill:#eef1ff;stroke:#5b76fe;stroke-width:1}
+</style>
+<rect class="bg" x="0" y="0" width="480" height="620"/><rect x="16" y="16" width="448" height="588" class="panel" /><text x="32" y="46" class="t14" >文件树</text><rect x="32" y="60" width="416" height="30" rx="8" class="panel" /><text x="44" y="79" class="tiny" >🔍 过滤文件…</text><line class="divider" x1="32" y1="104" x2="448" y2="104"/><path d="M40 115 h5 l2 3 h8 v11 h-15 z" fill="#555a6a" fill-opacity=".18" stroke="#555a6a" stroke-width="1"/><text x="56" y="126" class="th" >需求</text><text x="432" y="126" class="tiny" text-anchor="end">12</text><path d="M60 145 h7 l4 4 v13 h-11 z" fill="#5b76fe" fill-opacity=".18" stroke="#5b76fe" stroke-width="1"/><path d="M67 145 v4 h4" fill="none" stroke="#5b76fe" stroke-width="1"/><text x="76" y="156" class="t" >需求.md</text><text x="432" y="156" class="tiny" text-anchor="end">md</text><path d="M60 175 h7 l4 4 v13 h-11 z" fill="#00b473" fill-opacity=".18" stroke="#00b473" stroke-width="1"/><path d="M67 175 v4 h4" fill="none" stroke="#00b473" stroke-width="1"/><text x="76" y="186" class="t" >台账.xlsx</text><text x="432" y="186" class="tiny" text-anchor="end">xlsx</text><path d="M60 205 h7 l4 4 v13 h-11 z" fill="#187574" fill-opacity=".18" stroke="#187574" stroke-width="1"/><path d="M67 205 v4 h4" fill="none" stroke="#187574" stroke-width="1"/><text x="76" y="216" class="t" >智能文档.docxxml</text><text x="432" y="216" class="tiny" text-anchor="end">docxxml</text><path d="M40 235 h5 l2 3 h8 v11 h-15 z" fill="#555a6a" fill-opacity=".18" stroke="#555a6a" stroke-width="1"/><text x="56" y="246" class="th" >方案</text><text x="432" y="246" class="tiny" text-anchor="end">8</text><path d="M60 265 h7 l4 4 v13 h-11 z" fill="#e8853a" fill-opacity=".18" stroke="#e8853a" stroke-width="1"/><path d="M67 265 v4 h4" fill="none" stroke="#e8853a" stroke-width="1"/><text x="76" y="276" class="t" >方案.pptx</text><text x="432" y="276" class="tiny" text-anchor="end">pptx</text><path d="M60 295 h7 l4 4 v13 h-11 z" fill="#9aa0b0" fill-opacity=".18" stroke="#9aa0b0" stroke-width="1"/><path d="M67 295 v4 h4" fill="none" stroke="#9aa0b0" stroke-width="1"/><text x="76" y="306" class="t" >架构.drawio</text><text x="432" y="306" class="tiny" text-anchor="end">drawio</text><path d="M60 325 h7 l4 4 v13 h-11 z" fill="#9aa0b0" fill-opacity=".18" stroke="#9aa0b0" stroke-width="1"/><path d="M67 325 v4 h4" fill="none" stroke="#9aa0b0" stroke-width="1"/><text x="76" y="336" class="t" >流程.vsdx</text><text x="432" y="336" class="tiny" text-anchor="end">vsdx</text><path d="M40 355 h5 l2 3 h8 v11 h-15 z" fill="#555a6a" fill-opacity=".18" stroke="#555a6a" stroke-width="1"/><text x="56" y="366" class="th" >归档</text><text x="432" y="366" class="tiny" text-anchor="end">31</text><path d="M60 385 h7 l4 4 v13 h-11 z" fill="#187574" fill-opacity=".18" stroke="#187574" stroke-width="1"/><path d="M67 385 v4 h4" fill="none" stroke="#187574" stroke-width="1"/><text x="76" y="396" class="t" >旧版.docx</text><text x="432" y="396" class="tiny" text-anchor="end">docx</text><line class="divider" x1="32" y1="432" x2="448" y2="432"/><rect x="32" y="448" width="112" height="28" rx="8" class="btn" /><text x="88" y="466" class="btn-t" text-anchor="middle">＋ 新建</text><rect x="152" y="448" width="96" height="28" rx="8" class="btn" /><text x="200" y="466" class="btn-t" text-anchor="middle">⇅ 排序</text><rect x="256" y="448" width="96" height="28" rx="8" class="btn" /><text x="304" y="466" class="btn-t" text-anchor="middle">⟳ 刷新</text><rect x="32" y="490" width="416" height="28" rx="8" class="sunken" /><text x="44" y="508" class="tiny" >拖到文档区＝插入引用（动态，非复制）</text><text x="32" y="542" class="tiny" >· 单击＝预览　双击＝编辑　右键＝更多操作</text><text x="32" y="560" class="tiny" >· 文件夹前圆点＝该目录存在未提交改动</text><text x="32" y="578" class="tiny" >· 输入 [[ 触发文件 / 标题 / 块 三级补全</text>
+</svg>

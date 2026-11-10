@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 620" width="1000" height="620" role="img" aria-label="P-7 关系图谱视图">
+<title>P-7 关系图谱视图</title>
+<style>
+.bg{fill:#ffffff}
+.panel{fill:#ffffff;stroke:#e9eaef;stroke-width:1}
+.sunken{fill:#f7f8fb}
+.bar{fill:#fbfbfd}
+.divider{stroke:#e9eaef;stroke-width:1}
+.ln{stroke:#c7cad5;stroke-width:1}
+.ln-dash{stroke:#c7cad5;stroke-width:1;stroke-dasharray:3 3}
+.hit{fill:#5b76fe;fill-opacity:.16}
+.t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#555a6a}
+.th{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:12px;font-weight:600;fill:#1c1c1e}
+.t14{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:14px;font-weight:600;fill:#1c1c1e}
+.t18{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:18px;font-weight:600;fill:#1c1c1e}
+.tiny{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;fill:#a5a8b5}
+.micro{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:10px;letter-spacing:.6px;fill:#555a6a}
+.mono{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#555a6a}
+.mono-b{font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:11px;fill:#1c1c1e}
+.btn{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.btn-p{fill:#5b76fe;stroke:#5b76fe;stroke-width:1}
+.btn-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#1c1c1e}
+.btn-pt{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#ffffff}
+.chip{fill:#ffffff;stroke:#c7cad5;stroke-width:1}
+.coral{fill:#ffc6c6}.coral-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#600000}
+.teal{fill:#c3faf5}.teal-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#187574}
+.rose{fill:#ffd8f4}
+.orange{fill:#ffe6cd}
+.pink{fill:#fde0f0}
+.red{fill:#fbd4d4}.red-t{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#8a2020}
+.blue{fill:#5b76fe}
+.gray{fill:#c7cad5}
+.ok{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;fill:#00b473}
+.badge{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:9.5px;letter-spacing:.5px;font-weight:600}
+.anno{font-family:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:700;fill:#ffffff}
+.sel{fill:#eef1ff;stroke:#5b76fe;stroke-width:1}
+</style>
+<rect class="bg" x="0" y="0" width="1000" height="620"/><rect x="16" y="16" width="968" height="44" rx="8" class="panel" /><text x="36" y="44" class="t" >布局：力导向 ▾</text><text x="180" y="44" class="t" >深度：2 ▾</text><text x="300" y="44" class="t" >聚焦：当前文档</text><text x="460" y="44" class="t" >过滤：仅 md ☐  含失效 ☑</text><text x="964" y="44" class="t" text-anchor="end">⟳ 重排</text><rect x="16" y="72" width="968" height="480" class="panel" /><line x1="500" y1="300" x2="300" y2="190" class="引用"/><text x="406" y="241" class="tiny" ></text><line x1="500" y1="300" x2="700" y2="190" class="引用"/><text x="606" y="241" class="tiny" ></text><line x1="500" y1="300" x2="300" y2="420" class="引用"/><text x="406" y="356" class="tiny" ></text><line x1="500" y1="300" x2="500" y2="130" class="引用"/><text x="506" y="211" class="tiny" ></text><line x1="300" y1="420" x2="700" y2="420" class="失效"/><text x="506" y="416" class="tiny" >失效</text><rect x="452" y="283" width="96" height="34" rx="10" class="sel" /><rect x="462" y="292" width="10" height="14" rx="2" class="blue" /><text x="478" y="302" class="th" >周报.md</text><text x="478" y="314" class="tiny" >md</text><text x="536" y="295" class="blue" >●</text><rect x="252" y="173" width="96" height="34" rx="10" class="panel" /><rect x="262" y="182" width="10" height="14" rx="2" class="teal" /><text x="278" y="192" class="th" >台账.xlsx</text><text x="278" y="204" class="tiny" >xlsx</text><rect x="652" y="173" width="96" height="34" rx="10" class="panel" /><rect x="662" y="182" width="10" height="14" rx="2" class="orange" /><text x="678" y="192" class="th" >方案.pptx</text><text x="678" y="204" class="tiny" >pptx</text><rect x="252" y="403" width="96" height="34" rx="10" class="panel" /><rect x="262" y="412" width="10" height="14" rx="2" class="blue" /><text x="278" y="422" class="th" >复盘.md</text><text x="278" y="434" class="tiny" >md</text><rect x="652" y="403" width="96" height="34" rx="10" class="panel" /><rect x="662" y="412" width="10" height="14" rx="2" class="gray" /><text x="678" y="422" class="th" >归档/2023.md</text><text x="678" y="434" class="tiny" >md</text><rect x="452" y="113" width="96" height="34" rx="10" class="panel" /><rect x="462" y="122" width="10" height="14" rx="2" class="blue" /><text x="478" y="132" class="th" >需求.md</text><text x="478" y="144" class="tiny" >md</text><text x="36" y="100" class="tiny" >单击节点→右侧预览　双击→打开文档　框选→批量关系视图</text><rect x="16" y="564" width="968" height="40" rx="8" class="panel" /><circle cx="36" cy="584" r="5" class="blue"/><text x="48" y="588" class="tiny" >当前文档</text><circle cx="130" cy="584" r="5" class="teal"/><text x="142" y="588" class="tiny" >被引用</text><circle cx="220" cy="584" r="5" class="panel"/><text x="232" y="588" class="tiny" >邻域节点</text><circle cx="340" cy="584" r="5" class="gray"/><text x="352" y="588" class="tiny" >失效链接（虚线）</text><text x="964" y="588" class="tiny" text-anchor="end">规模保护：默认 2 度邻域，节点数 &gt; 500 时按度数裁剪</text>
+</svg>

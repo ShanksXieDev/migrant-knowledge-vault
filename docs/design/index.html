@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MKV 设计图索引</title>
+<style>
+:root{
+  --ink:#1c1c1e; --slate:#555a6a; --ph:#a5a8b5; --white:#ffffff;
+  --blue:#5b76fe; --blue-press:#2a41b6; --ok:#00b473;
+  --border:#c7cad5; --ring:rgb(224,226,232); --line:#e9eaef;
+  --coral:#ffc6c6; --coral-dk:#600000; --teal:#c3faf5; --teal-dk:#187574;
+  --rose:#ffd8f4; --orange:#ffe6cd; --pink:#fde0f0; --red:#fbd4d4; --red-dk:#8a2020;
+  --yellow-dk:#746019; --sunken:#f7f8fb; --bar:#fbfbfd;
+  --display:'Roobert PRO Medium','Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;
+  --body:'Noto Sans','Segoe UI','Microsoft YaHei',sans-serif;
+  --mono:'Cascadia Code',Consolas,'Courier New',monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--white);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5;letter-spacing:-.16px}
+a{color:var(--blue);text-decoration:none}
+a:hover{color:var(--blue-press)}
+.hero{padding:56px 40px 40px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#fbfbfd 0%,#fff 100%)}
+.hero h1{font-family:var(--display);font-size:56px;line-height:1.15;letter-spacing:-1.68px;font-weight:400;margin:0 0 12px}
+.hero .sub{font-size:22px;line-height:1.35;letter-spacing:-.44px;color:var(--slate);max-width:880px;margin:0 0 20px}
+.hero .meta{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:1px solid var(--border);border-radius:20px;padding:6px 14px;font-size:13px;color:var(--slate);background:#fff}
+.chip.acc{background:var(--coral);border-color:transparent;color:var(--coral-dk)}
+.chip.tl{background:var(--teal);border-color:transparent;color:var(--teal-dk)}
+.layout{display:grid;grid-template-columns:264px minmax(0,1fr);gap:0;align-items:start}
+.toc{position:sticky;top:0;max-height:100vh;overflow:auto;padding:28px 20px;border-right:1px solid var(--line);background:var(--bar)}
+.toc h4{font-family:var(--display);font-size:12px;letter-spacing:.5px;text-transform:uppercase;color:var(--ph);margin:20px 0 8px;font-weight:400}
+.toc a{display:block;padding:5px 8px;border-radius:8px;color:var(--slate);font-size:13.5px}
+.toc a:hover{background:var(--sunken);color:var(--ink)}
+.toc a.sub{padding-left:22px;font-size:13px;color:var(--ph)}
+main{padding:40px 48px 96px;max-width:1180px}
+section{margin-bottom:64px;scroll-margin-top:24px}
+h2{font-family:var(--display);font-size:48px;line-height:1.15;letter-spacing:-1.44px;font-weight:400;margin:0 0 8px}
+h3{font-family:var(--display);font-size:24px;line-height:1.15;letter-spacing:-.72px;font-weight:400;margin:40px 0 12px}
+h4{font-family:var(--display);font-size:18px;line-height:1.35;font-weight:600;margin:24px 0 8px}
+p{margin:0 0 14px;color:var(--slate)}
+.lead{font-size:18px;line-height:1.45;color:var(--ink)}
+.card{background:#fff;border-radius:16px;box-shadow:0 0 0 1px var(--ring);padding:24px;margin:16px 0}
+.shot{background:#fff;border-radius:16px;box-shadow:0 0 0 1px var(--ring);padding:12px;margin:16px 0;overflow:auto}
+.shot svg{display:block;width:100%;height:auto;max-width:100%}
+.shot .cap{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 8px 2px;color:var(--ph);font-size:12px}
+.shot .cap a{font-size:12px}
+table{border-collapse:collapse;width:100%;font-size:14px;margin:12px 0 20px}
+th{text-align:left;font-family:var(--display);font-weight:600;font-size:12px;letter-spacing:.4px;text-transform:uppercase;color:var(--slate);border-bottom:1px solid var(--border);padding:8px 10px}
+td{border-bottom:1px solid var(--line);padding:9px 10px;vertical-align:top;color:var(--ink)}
+tbody tr:nth-child(even){background:var(--sunken)}
+code,.mono{font-family:var(--mono);font-size:12.5px;background:var(--sunken);padding:1px 5px;border-radius:5px;color:var(--ink)}
+ul{margin:0 0 14px;padding-left:20px;color:var(--slate)}
+li{margin:4px 0}
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px;margin:16px 0}
+.sw{border-radius:12px;box-shadow:0 0 0 1px var(--ring);padding:14px;min-height:84px;display:flex;flex-direction:column;justify-content:flex-end}
+.sw b{font-family:var(--display);font-size:14px;font-weight:600}
+.sw span{font-size:11px;opacity:.78;font-family:var(--mono)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.note{border-radius:12px;padding:16px 18px;background:var(--teal);color:var(--teal-dk);margin:16px 0;font-size:15px}
+.note.warn{background:var(--coral);color:var(--coral-dk)}
+.note.plain{background:var(--sunken);color:var(--slate)}
+.kbd{font-family:var(--mono);font-size:12px;border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;padding:1px 6px;background:#fff}
+footer{border-top:1px solid var(--line);padding:32px 48px;color:var(--ph);font-size:13px;background:var(--bar)}
+@media (max-width:1024px){.layout{grid-template-columns:1fr}.toc{position:static;max-height:none;border-right:none;border-bottom:1px solid var(--line)}main{padding:28px 20px 64px}.hero{padding:36px 20px 28px}.hero h1{font-size:38px}h2{font-size:32px}}
+@media print{.toc{display:none}.layout{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="hero">
+  <h1>MKV 设计图索引</h1>
+  <p class="sub">Migrant Knowledge Vault · 原型图与详细设计图的统一入口。全部图以独立 SVG 提供，并内嵌为两份自包含 HTML 图册。</p>
+  <div class="meta"><span class="chip acc">v1.0</span><span class="chip ">2026-11-10</span><span class="chip tl">SVG × 34</span></div>
+</header>
+<div class="layout">
+  <nav class="toc"><h4>目录</h4><a href="#">产物清单</a></nav>
+  <main>
+<section>
+  <h2>产物清单</h2>
+  <p class="lead">共 34 张图（11 张原型线框 + 23 张设计图），均提供独立 SVG 与内嵌于 HTML 图册的版本。</p>
+  <table>
+    <thead><tr><th>文件</th><th>标题</th><th>类别</th><th>预览</th></tr></thead>
+    <tbody>
+      <tr><td><a href="./svg/p01-workbench.svg">p01-workbench.svg</a></td><td>P-1 工作台（主界面三栏线框）</td><td>原型线框</td><td><a href="./svg/p01-workbench.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/p02-file-tree.svg">p02-file-tree.svg</a></td><td>P-2 文件树侧栏</td><td>原型线框</td><td><a href="./svg/p02-file-tree.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/p03-document-workspace.svg">p03-document-workspace.svg</a></td><td>P-3 文档工作区（预览 = 编辑同页）</td><td>原型线框</td><td><a href="./svg/p03-document-workspace.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/p04-reference-bar.svg">p04-reference-bar.svg</a></td><td>P-4 跨格式引用条（三种状态）</td><td>原型线框</td><td><a href="./svg/p04-reference-bar.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/p05-search.svg">p05-search.svg</a></td><td>P-5 搜索中心（结果 + 上下文 + 过滤）</td><td>原型线框</td><td><a href="./svg/p05-search.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/p06-backlinks.svg">p06-backlinks.svg</a></td><td>P-6 内联双链与反链面板</td><td>原型线框</td><td><a href="./svg/p06-backlinks.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/p07-graph.svg">p07-graph.svg</a></td><td>P-7 关系图谱视图</td><td>原型线框</td><td><a href="./svg/p07-graph.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/p08-git-timeline.svg">p08-git-timeline.svg</a></td><td>P-8 Git 时间线与 diff</td><td>原型线框</td><td><a href="./svg/p08-git-timeline.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/p09-command-palette.svg">p09-command-palette.svg</a></td><td>P-9 命令面板</td><td>原型线框</td><td><a href="./svg/p09-command-palette.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/p10-settings.svg">p10-settings.svg</a></td><td>P-10 设置（插件与格式能力）</td><td>原型线框</td><td><a href="./svg/p10-settings.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/p11-degraded-states.svg">p11-degraded-states.svg</a></td><td>P-11 降级与异常态</td><td>原型线框</td><td><a href="./svg/p11-degraded-states.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-01-flow.svg">fig-01-flow.svg</a></td><td>2.1 导航结构</td><td>设计图</td><td><a href="./svg/fig-01-flow.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-02-seq.svg">fig-02-seq.svg</a></td><td>6.1 首次打开知识库</td><td>设计图</td><td><a href="./svg/fig-02-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-03-seq.svg">fig-03-seq.svg</a></td><td>6.2 打开并编辑一份 PPT（引擎为插件）</td><td>设计图</td><td><a href="./svg/fig-03-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-04-seq.svg">fig-04-seq.svg</a></td><td>6.3 搜索 → 跳转 → 反链 → 顺藤摸瓜</td><td>设计图</td><td><a href="./svg/fig-04-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-05-seq.svg">fig-05-seq.svg</a></td><td>6.4 插入跨格式引用（拖拽 / `@`）</td><td>设计图</td><td><a href="./svg/fig-05-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-06-seq.svg">fig-06-seq.svg</a></td><td>6.5 Git 提交与回滚</td><td>设计图</td><td><a href="./svg/fig-06-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-07-flow.svg">fig-07-flow.svg</a></td><td>2. 系统上下文</td><td>设计图</td><td><a href="./svg/fig-07-flow.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-08-flow.svg">fig-08-flow.svg</a></td><td>3.1 总体分层【文档 + 补充】</td><td>设计图</td><td><a href="./svg/fig-08-flow.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-09-flow.svg">fig-09-flow.svg</a></td><td>3.3 Cordis Host / Client 拆分【文档】</td><td>设计图</td><td><a href="./svg/fig-09-flow.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-10-state.svg">fig-10-state.svg</a></td><td>5.1 插件生命周期</td><td>设计图</td><td><a href="./svg/fig-10-state.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-11-seq.svg">fig-11-seq.svg</a></td><td>6.1 打开文档（能力解析 → 会话挂载）</td><td>设计图</td><td><a href="./svg/fig-11-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-12-seq.svg">fig-12-seq.svg</a></td><td>6.2 保存（原子替换 + 监听回环）</td><td>设计图</td><td><a href="./svg/fig-12-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-13-seq.svg">fig-13-seq.svg</a></td><td>6.3 后台索引与检索</td><td>设计图</td><td><a href="./svg/fig-13-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-14-seq.svg">fig-14-seq.svg</a></td><td>6.4 双链解析与反链维护</td><td>设计图</td><td><a href="./svg/fig-14-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-15-seq.svg">fig-15-seq.svg</a></td><td>6.5 插件安装与加载</td><td>设计图</td><td><a href="./svg/fig-15-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-16-seq.svg">fig-16-seq.svg</a></td><td>6.6 Git 提交与回滚</td><td>设计图</td><td><a href="./svg/fig-16-seq.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-17-er.svg">fig-17-er.svg</a></td><td>7.1 领域实体</td><td>设计图</td><td><a href="./svg/fig-17-er.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-18-state.svg">fig-18-state.svg</a></td><td>8.1 文档会话状态机</td><td>设计图</td><td><a href="./svg/fig-18-state.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-19-state.svg">fig-19-state.svg</a></td><td>8.2 索引状态机</td><td>设计图</td><td><a href="./svg/fig-19-state.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-20-state.svg">fig-20-state.svg</a></td><td>8.3 引用状态机</td><td>设计图</td><td><a href="./svg/fig-20-state.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-21-flow.svg">fig-21-flow.svg</a></td><td>11.1 抽取管线</td><td>设计图</td><td><a href="./svg/fig-21-flow.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-22-flow.svg">fig-22-flow.svg</a></td><td>12.2 引用实体与变更传播</td><td>设计图</td><td><a href="./svg/fig-22-flow.svg" target="_blank">打开 SVG</a></td></tr>
+<tr><td><a href="./svg/fig-23-flow.svg">fig-23-flow.svg</a></td><td>1. 本目录是什么</td><td>设计图</td><td><a href="./svg/fig-23-flow.svg" target="_blank">打开 SVG</a></td></tr>
+    </tbody>
+  </table>
+</section>
+<section>
+  <h2>配套文档</h2>
+  <ul>
+    <li><a href="./prototype.html">prototype.html</a> —— 原型图册（信息架构 / 11 页线框 / 状态矩阵 / 交互流程 / 视觉规范）</li>
+    <li><a href="./detailed-design.html">detailed-design.html</a> —— 详细设计图册（架构 / 时序 / 模型 / 状态机 / 契约 / 待决项）</li>
+    <li><a href="./01-原型图.md">01-原型图.md</a> —— 原型图文字规范（含全部说明表）</li>
+    <li><a href="./02-详细设计.md">02-详细设计.md</a> —— 详细设计文字规范（含接口契约与追踪矩阵）</li>
+  </ul>
+</section></main>
+</div>
+<footer>MKV 设计集 · 图索引</footer>
+</body>
+</html>

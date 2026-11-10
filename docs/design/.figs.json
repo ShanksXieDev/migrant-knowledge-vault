@@ -1,0 +1,209 @@
+[
+  {
+    "id": "fig-01-flow",
+    "file": "fig-01-flow.svg",
+    "kind": "flow",
+    "heading": "2.1 导航结构",
+    "source": "01-原型图.md",
+    "line": 30,
+    "title": "2.1 导航结构"
+  },
+  {
+    "id": "fig-02-seq",
+    "file": "fig-02-seq.svg",
+    "kind": "seq",
+    "heading": "6.1 首次打开知识库",
+    "source": "01-原型图.md",
+    "line": 446,
+    "title": "6.1 首次打开知识库"
+  },
+  {
+    "id": "fig-03-seq",
+    "file": "fig-03-seq.svg",
+    "kind": "seq",
+    "heading": "6.2 打开并编辑一份 PPT（引擎为插件）",
+    "source": "01-原型图.md",
+    "line": 471,
+    "title": "6.2 打开并编辑一份 PPT（引擎为插件）"
+  },
+  {
+    "id": "fig-04-seq",
+    "file": "fig-04-seq.svg",
+    "kind": "seq",
+    "heading": "6.3 搜索 → 跳转 → 反链 → 顺藤摸瓜",
+    "source": "01-原型图.md",
+    "line": 502,
+    "title": "6.3 搜索 → 跳转 → 反链 → 顺藤摸瓜"
+  },
+  {
+    "id": "fig-05-seq",
+    "file": "fig-05-seq.svg",
+    "kind": "seq",
+    "heading": "6.4 插入跨格式引用（拖拽 / `@`）",
+    "source": "01-原型图.md",
+    "line": 523,
+    "title": "6.4 插入跨格式引用（拖拽 / `@`）"
+  },
+  {
+    "id": "fig-06-seq",
+    "file": "fig-06-seq.svg",
+    "kind": "seq",
+    "heading": "6.5 Git 提交与回滚",
+    "source": "01-原型图.md",
+    "line": 544,
+    "title": "6.5 Git 提交与回滚"
+  },
+  {
+    "id": "fig-07-flow",
+    "file": "fig-07-flow.svg",
+    "kind": "flow",
+    "heading": "2. 系统上下文",
+    "source": "02-详细设计.md",
+    "line": 49,
+    "title": "2. 系统上下文"
+  },
+  {
+    "id": "fig-08-flow",
+    "file": "fig-08-flow.svg",
+    "kind": "flow",
+    "heading": "3.1 总体分层【文档 + 补充】",
+    "source": "02-详细设计.md",
+    "line": 71,
+    "title": "3.1 总体分层【文档 + 补充】"
+  },
+  {
+    "id": "fig-09-flow",
+    "file": "fig-09-flow.svg",
+    "kind": "flow",
+    "heading": "3.3 Cordis Host / Client 拆分【文档】",
+    "source": "02-详细设计.md",
+    "line": 135,
+    "title": "3.3 Cordis Host / Client 拆分【文档】"
+  },
+  {
+    "id": "fig-10-state",
+    "file": "fig-10-state.svg",
+    "kind": "state",
+    "heading": "5.1 插件生命周期",
+    "source": "02-详细设计.md",
+    "line": 196,
+    "title": "5.1 插件生命周期"
+  },
+  {
+    "id": "fig-11-seq",
+    "file": "fig-11-seq.svg",
+    "kind": "seq",
+    "heading": "6.1 打开文档（能力解析 → 会话挂载）",
+    "source": "02-详细设计.md",
+    "line": 239,
+    "title": "6.1 打开文档（能力解析 → 会话挂载）"
+  },
+  {
+    "id": "fig-12-seq",
+    "file": "fig-12-seq.svg",
+    "kind": "seq",
+    "heading": "6.2 保存（原子替换 + 监听回环）",
+    "source": "02-详细设计.md",
+    "line": 266,
+    "title": "6.2 保存（原子替换 + 监听回环）"
+  },
+  {
+    "id": "fig-13-seq",
+    "file": "fig-13-seq.svg",
+    "kind": "seq",
+    "heading": "6.3 后台索引与检索",
+    "source": "02-详细设计.md",
+    "line": 290,
+    "title": "6.3 后台索引与检索"
+  },
+  {
+    "id": "fig-14-seq",
+    "file": "fig-14-seq.svg",
+    "kind": "seq",
+    "heading": "6.4 双链解析与反链维护",
+    "source": "02-详细设计.md",
+    "line": 313,
+    "title": "6.4 双链解析与反链维护"
+  },
+  {
+    "id": "fig-15-seq",
+    "file": "fig-15-seq.svg",
+    "kind": "seq",
+    "heading": "6.5 插件安装与加载",
+    "source": "02-详细设计.md",
+    "line": 337,
+    "title": "6.5 插件安装与加载"
+  },
+  {
+    "id": "fig-16-seq",
+    "file": "fig-16-seq.svg",
+    "kind": "seq",
+    "heading": "6.6 Git 提交与回滚",
+    "source": "02-详细设计.md",
+    "line": 363,
+    "title": "6.6 Git 提交与回滚"
+  },
+  {
+    "id": "fig-17-er",
+    "file": "fig-17-er.svg",
+    "kind": "er",
+    "heading": "7.1 领域实体",
+    "source": "02-详细设计.md",
+    "line": 391,
+    "title": "7.1 领域实体"
+  },
+  {
+    "id": "fig-18-state",
+    "file": "fig-18-state.svg",
+    "kind": "state",
+    "heading": "8.1 文档会话状态机",
+    "source": "02-详细设计.md",
+    "line": 460,
+    "title": "8.1 文档会话状态机"
+  },
+  {
+    "id": "fig-19-state",
+    "file": "fig-19-state.svg",
+    "kind": "state",
+    "heading": "8.2 索引状态机",
+    "source": "02-详细设计.md",
+    "line": 487,
+    "title": "8.2 索引状态机"
+  },
+  {
+    "id": "fig-20-state",
+    "file": "fig-20-state.svg",
+    "kind": "state",
+    "heading": "8.3 引用状态机",
+    "source": "02-详细设计.md",
+    "line": 503,
+    "title": "8.3 引用状态机"
+  },
+  {
+    "id": "fig-21-flow",
+    "file": "fig-21-flow.svg",
+    "kind": "flow",
+    "heading": "11.1 抽取管线",
+    "source": "02-详细设计.md",
+    "line": 682,
+    "title": "11.1 抽取管线"
+  },
+  {
+    "id": "fig-22-flow",
+    "file": "fig-22-flow.svg",
+    "kind": "flow",
+    "heading": "12.2 引用实体与变更传播",
+    "source": "02-详细设计.md",
+    "line": 729,
+    "title": "12.2 引用实体与变更传播"
+  },
+  {
+    "id": "fig-23-flow",
+    "file": "fig-23-flow.svg",
+    "kind": "flow",
+    "heading": "1. 本目录是什么",
+    "source": "README.md",
+    "line": 37,
+    "title": "1. 本目录是什么"
+  }
+]
